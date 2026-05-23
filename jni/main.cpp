@@ -20,7 +20,7 @@ static void wait_for_spawn_callback(std::promise<int>& promise_obj) {
     int callback_pid = -1;
     std::string payload;
 
-    for (int i = 0; i < 80; ++i) {
+    for (int i = 0; i < 200; ++i) {
         struct stat st{};
         if (stat(NINJECTOR_RESULT_FILE, &st) == 0 && st.st_size > 0) {
             std::ifstream file(NINJECTOR_RESULT_FILE);

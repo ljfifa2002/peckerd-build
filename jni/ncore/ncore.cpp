@@ -45,10 +45,13 @@ static void send_status_to_injector(const char* package_name, const char* so_pat
 }
 
 static bool matches_target(const char* name) {
-    bool matched = g_target_package != nullptr &&
-                   g_target_so != nullptr &&
-                   name != nullptr &&
-                   strcmp(name, g_target_package) == 0;
+    if (g_target_package == nullptr || g_target_so == nullptr || name == nullptr) {
+        return false;
+    }
+    size_t pkg_len = strlen(g_target_package);
+    // Match exact name or sub-process with ":<suffix>" (e.g. ":channel")
+    bool matched = strncmp(name, g_target_package, pkg_len) == 0 &&
+                   (name[pkg_len] == '\0' || name[pkg_len] == ':');
     if (name != nullptr) {
         LOGD("ncore: compare target current=%s target=%s matched=%d",
              name,
