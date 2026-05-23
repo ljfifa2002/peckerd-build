@@ -1,0 +1,44 @@
+name: Build Ninjector
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone TInjector (provides libdobby.a)
+        # Android.mk path: ../../TInjector-main/jni/core/<ABI>/libdobby.a
+        # Resolved from jni/: $GITHUB_WORKSPACE/../TInjector-main
+        run: |
+          git clone --depth=1 https://github.com/Mrack/TInjector.git "$GITHUB_WORKSPACE/../TInjector-main"
+
+      - name: Setup Android NDK r25c
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r25c
+          add-to-path: true
+
+      - name: Build with ndk-build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          $ANDROID_NDK_HOME/ndk-build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ninjector-arm64-v8a
+          path: |
+            libs/arm64-v8a/Ninjector
+            libs/arm64-v8a/libncore.so
+          if-no-files-found: error
