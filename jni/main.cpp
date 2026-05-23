@@ -13,7 +13,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#define NINJECTOR_RESULT_FILE "/data/local/tmp/Ninjector/spawn_result.json"
+#define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
 
 static void wait_for_spawn_callback(std::promise<int>& promise_obj) {
     unlink(NINJECTOR_RESULT_FILE);

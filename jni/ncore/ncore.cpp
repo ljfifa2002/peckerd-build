@@ -9,7 +9,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 
-#define NINJECTOR_RESULT_FILE "/data/local/tmp/Ninjector/spawn_result.json"
+#define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
 
 static char* g_target_package = nullptr;
 static char* g_target_so = nullptr;
