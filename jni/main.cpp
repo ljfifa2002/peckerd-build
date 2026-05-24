@@ -92,12 +92,14 @@ static void show_help(const char* name) {
     printf("  %s -P <pid> <so_path>\n", name);
     printf("  %s -f -p <package> <so_path>\n", name);
     printf("  %s --spawn-symbi -p <package> <so_path>\n", name);
+    printf("  %s --clear\n", name);
     printf("  %s -h\n", name);
 
     LOGI("Usage:");
     LOGI("  %s -P <pid> <so_path>", name);
     LOGI("  %s -f -p <package> <so_path>", name);
     LOGI("  %s --spawn-symbi -p <package> <so_path>", name);
+    LOGI("  %s --clear", name);
     LOGI("  %s -h", name);
 }
 
@@ -112,6 +114,7 @@ int main(int argc, char* argv[]) {
     const char* package_name = nullptr;
     bool spawn_mode = false;
     bool spawn_symbi_mode = false;
+    bool clear_mode = false;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-P") == 0 && i + 2 < argc) {
@@ -124,10 +127,33 @@ int main(int argc, char* argv[]) {
             spawn_mode = true;
         } else if (strcmp(argv[i], "--spawn-symbi") == 0) {
             spawn_symbi_mode = true;
+        } else if (strcmp(argv[i], "--clear") == 0) {
+            clear_mode = true;
         } else if (strcmp(argv[i], "-h") == 0) {
             show_help(argv[0]);
             return 0;
         }
+    }
+
+    if (clear_mode) {
+        pid_t zygote_pid = get_pid("zygote64");
+        if (zygote_pid <= 0) {
+            LOGE("main: zygote64 not found");
+            return -1;
+        }
+        char cwd[PATH_MAX] = {0};
+        if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+            LOGE("main: getcwd failed");
+            return -1;
+        }
+        std::string ncore_path = std::string(cwd) + "/libncore.so";
+        LOGI("main: clear zygote=%d ncore=%s", zygote_pid, ncore_path.c_str());
+        if (!clear_spawn_in_zygote(zygote_pid, ncore_path.c_str())) {
+            LOGE("main: clear failed");
+            return -1;
+        }
+        LOGI("main: clear ok");
+        return 0;
     }
 
     if (spawn_mode && spawn_symbi_mode) {
