@@ -212,11 +212,8 @@ int main(int argc, char* argv[]) {
         int callback_pid = future.get();
         if (callback_pid > 0) {
             LOGI("main: spawn inject success child_pid=%d", callback_pid);
-            if (!clear_spawn_in_zygote(pid, ncore_path.c_str())) {
-                LOGE("main: spawn clear failed");
-            } else {
-                LOGI("main: spawn clear success");
-            }
+            // 不自动 clear：让 ncore 继续为后续匹配的子进程（主进程等）注入
+            // 注入完成后手动执行 --clear
         } else {
             LOGE("main: spawn callback timeout or failed");
             return -1;
