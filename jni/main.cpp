@@ -16,7 +16,10 @@
 #define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
 
 static void wait_for_spawn_callback(std::promise<int>& promise_obj) {
-    unlink(NINJECTOR_RESULT_FILE);
+    // truncate 清空旧内容，保留文件（不 unlink），app 进程无法在该目录创建新文件
+    int clear_fd = open(NINJECTOR_RESULT_FILE, O_WRONLY | O_TRUNC);
+    if (clear_fd >= 0) close(clear_fd);
+
     int callback_pid = -1;
     std::string payload;
 
@@ -43,7 +46,9 @@ static void wait_for_spawn_callback(std::promise<int>& promise_obj) {
     if (pid_pos != nullptr) {
         callback_pid = atoi(pid_pos + strlen(pid_key));
     }
-    unlink(NINJECTOR_RESULT_FILE);
+    // truncate 而不是 unlink，保留文件供下次使用
+    int done_fd = open(NINJECTOR_RESULT_FILE, O_WRONLY | O_TRUNC);
+    if (done_fd >= 0) close(done_fd);
     promise_obj.set_value(callback_pid);
 }
 
