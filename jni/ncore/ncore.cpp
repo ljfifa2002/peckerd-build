@@ -93,6 +93,24 @@ extern "C" void aclear() {
     unload_target_state();
 }
 
+static void preload_deps(const char* so_path) {
+    const char* last_slash = strrchr(so_path, '/');
+    if (last_slash == nullptr) return;
+    size_t dir_len = (size_t)(last_slash - so_path + 1);
+
+    const char* deps[] = {"liblsplant.so", "libshadowhook.so", nullptr};
+    for (int i = 0; deps[i] != nullptr; i++) {
+        char dep_path[512] = {0};
+        snprintf(dep_path, sizeof(dep_path), "%.*s%s", (int)dir_len, so_path, deps[i]);
+        void* h = dlopen(dep_path, RTLD_NOW | RTLD_GLOBAL);
+        if (h == nullptr) {
+            LOGD("ncore: preload %s skipped: %s", dep_path, dlerror());
+        } else {
+            LOGI("ncore: preloaded %s", dep_path);
+        }
+    }
+}
+
 static bool load_payload_if_needed(const char* package_name) {
     if (!matches_target(package_name)) {
         return false;
@@ -108,6 +126,7 @@ static bool load_payload_if_needed(const char* package_name) {
          g_target_so != nullptr ? g_target_so : "(null)");
 
     unhook_all();
+    preload_deps(g_target_so);
 
     void* handle = dlopen(g_target_so, RTLD_NOW | RTLD_NODELETE | RTLD_GLOBAL);
     if (handle == nullptr) {
