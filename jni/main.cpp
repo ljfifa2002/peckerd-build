@@ -11,6 +11,7 @@
 #include <fstream>
 #include <vector>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 
 #define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
