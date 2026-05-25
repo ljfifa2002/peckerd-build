@@ -8,8 +8,41 @@
 #include <cstring>
 #include <cstdlib>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
+#define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
+
+// Build lock-file path for a package name.
+// Returns length written (not including null), or 0 on overflow.
+static size_t lock_path(char* buf, size_t buf_size, const char* pkg) {
+    size_t n = snprintf(buf, buf_size, "%s%s", NINJECTOR_LOCK_PREFIX, pkg);
+    return (n < buf_size) ? n : 0;
+}
+
+// Returns true if this package has already been injected in another process.
+static bool is_already_injected(const char* pkg) {
+    char path[256];
+    if (!lock_path(path, sizeof(path), pkg)) return false;
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+// Mark this package as injected (creates the lock file).
+static void mark_injected(const char* pkg) {
+    char path[256];
+    if (!lock_path(path, sizeof(path), pkg)) return;
+    int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    if (fd >= 0) close(fd);
+}
+
+// Remove the injection lock file for a package (called on reset/clear).
+static void clear_injected(const char* pkg) {
+    if (!pkg) return;
+    char path[256];
+    if (!lock_path(path, sizeof(path), pkg)) return;
+    unlink(path);
+}
 
 static char* g_target_package = nullptr;
 static char* g_target_so = nullptr;
@@ -63,6 +96,7 @@ static bool matches_target(const char* name) {
 
 static void unload_target_state() {
     if (g_target_package != nullptr) {
+        clear_injected(g_target_package);
         free(g_target_package);
         g_target_package = nullptr;
     }
@@ -121,6 +155,16 @@ static bool load_payload_if_needed(const char* package_name) {
         return true;
     }
 
+    // Cross-process one-shot guard: if another forked process already loaded
+    // the payload for this package, skip injection in this process.
+    // This prevents an infinite fork loop when the app uses multi-process
+    // watchdog/guardian patterns (all children share the same package name).
+    if (is_already_injected(g_target_package)) {
+        LOGI("ncore: payload already injected in another process for %s, skipping",
+             package_name);
+        return true;
+    }
+
     LOGI("ncore: target matched, loading payload package=%s so=%s",
          package_name != nullptr ? package_name : "(null)",
          g_target_so != nullptr ? g_target_so : "(null)");
@@ -135,6 +179,7 @@ static bool load_payload_if_needed(const char* package_name) {
     }
 
     g_payload_loaded = true;
+    mark_injected(g_target_package);
     LOGI("ncore: payload loaded for %s => %s", package_name, g_target_so);
     send_status_to_injector(package_name, g_target_so);
     return true;
