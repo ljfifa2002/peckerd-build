@@ -56,6 +56,10 @@ static void* g_android_os_Process_setArg = nullptr;
 static void* g_selinux_android_setcontext = nullptr;
 static bool g_payload_loaded = false;
 static bool g_spawn_hooks_installed = false;
+// Set to true by the parent fork hook after the first injection target has been
+// dispatched. Inherited by subsequent children via fork copy-on-write, causing
+// them to skip hook installation entirely.  Reset only by aclear()/ainject().
+static bool g_injection_done = false;
 
 static void send_status_to_injector(const char* package_name, const char* so_path) {
     char payload[512] = {0};
@@ -101,10 +105,6 @@ static bool matches_target(const char* name) {
 }
 
 static void unload_target_state() {
-    // Do NOT clear the injection lock here — the lock must persist across
-    // multiple ainject() calls for the same package so that subsequent forked
-    // processes skip injection. Lock is only removed by aclear() or when
-    // ainject() switches to a different target package.
     if (g_target_package != nullptr) {
         free(g_target_package);
         g_target_package = nullptr;
@@ -114,6 +114,7 @@ static void unload_target_state() {
         g_target_so = nullptr;
     }
     g_payload_loaded = false;
+    g_injection_done = false;
 }
 
 static void unhook_all() {
@@ -239,12 +240,29 @@ static void install_child_hooks() {
 }
 
 DECLARE_HOOK(fork, pid_t, void) {
+    // Snapshot the flag before forking so the child inherits a consistent value.
+    bool already_done = g_injection_done;
     pid_t pid = orig_fork();
     if (pid == 0) {
-        LOGI("ncore: child forked pid=%d", getpid());
-        install_child_hooks();
+        // Child process
+        if (already_done) {
+            // A previous child already loaded the payload; this is a subsequent
+            // worker process of a multi-process app.  Skip hook installation so
+            // the worker runs unmodified and the app startup loop terminates.
+            LOGI("ncore: child forked pid=%d, injection already done, skipping hooks",
+                 getpid());
+        } else {
+            LOGI("ncore: child forked pid=%d", getpid());
+            install_child_hooks();
+        }
     } else if (pid > 0) {
         LOGD("ncore: parent observed fork child=%d", pid);
+        // Mark injection as dispatched after the first target child is forked.
+        // Subsequent forks will inherit g_injection_done=true and skip hooks.
+        if (!already_done && g_target_package != nullptr) {
+            g_injection_done = true;
+            LOGI("ncore: marked injection done after child=%d", pid);
+        }
     }
     return pid;
 }
@@ -255,14 +273,19 @@ DECLARE_HOOK(vfork, pid_t, void) {
 }
 
 extern "C" void ainject(const char* package_name, const char* so_path) {
-    // If switching to a different target package, clear the old package's lock.
-    if (g_target_package != nullptr && package_name != nullptr &&
-        strcmp(g_target_package, package_name) != 0) {
-        clear_injected(g_target_package);
+    // If switching to a different target package, clear the old package's lock
+    // and reset injection state so the new target can be injected fresh.
+    bool same_package = (g_target_package != nullptr && package_name != nullptr &&
+                         strcmp(g_target_package, package_name) == 0);
+    if (!same_package) {
+        if (g_target_package != nullptr) clear_injected(g_target_package);
+        unload_target_state();  // resets g_injection_done for new target
     }
+    // Same package: preserve g_injection_done so re-arm doesn't restart the loop.
 
-    unload_target_state();
-
+    // Refresh target strings (free old values first to avoid leaks).
+    if (g_target_package != nullptr) { free(g_target_package); g_target_package = nullptr; }
+    if (g_target_so     != nullptr) { free(g_target_so);      g_target_so      = nullptr; }
     if (package_name != nullptr && package_name[0] != '\0') {
         g_target_package = strdup(package_name);
     }
