@@ -33,7 +33,12 @@ static void mark_injected(const char* pkg) {
     char path[256];
     if (!lock_path(path, sizeof(path), pkg)) return;
     int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0666);
-    if (fd >= 0) close(fd);
+    if (fd >= 0) {
+        close(fd);
+        LOGI("ncore: injection lock created: %s", path);
+    } else {
+        LOGE("ncore: injection lock create FAILED: %s errno=%d", path, errno);
+    }
 }
 
 // Remove the injection lock file for a package (called on reset/clear).
@@ -283,8 +288,8 @@ __attribute__((destructor()))
 static void ncore_cleanup() {
     LOGD("ncore: cleanup");
     unhook_all();
-    if (g_target_package != nullptr) {
-        clear_injected(g_target_package);
-    }
+    // Do NOT clear the injection lock on process exit — the lock must outlive
+    // individual worker processes so subsequent forks see it and skip injection.
+    // Lock is only cleared by an explicit aclear() call.
     unload_target_state();
 }
