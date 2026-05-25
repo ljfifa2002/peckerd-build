@@ -95,8 +95,11 @@ static bool matches_target(const char* name) {
 }
 
 static void unload_target_state() {
+    // Do NOT clear the injection lock here — the lock must persist across
+    // multiple ainject() calls for the same package so that subsequent forked
+    // processes skip injection. Lock is only removed by aclear() or when
+    // ainject() switches to a different target package.
     if (g_target_package != nullptr) {
-        clear_injected(g_target_package);
         free(g_target_package);
         g_target_package = nullptr;
     }
@@ -124,6 +127,9 @@ static void unhook_all() {
 extern "C" void aclear() {
     LOGI("ncore: aclear");
     unhook_all();
+    if (g_target_package != nullptr) {
+        clear_injected(g_target_package);
+    }
     unload_target_state();
 }
 
@@ -243,6 +249,12 @@ DECLARE_HOOK(vfork, pid_t, void) {
 }
 
 extern "C" void ainject(const char* package_name, const char* so_path) {
+    // If switching to a different target package, clear the old package's lock.
+    if (g_target_package != nullptr && package_name != nullptr &&
+        strcmp(g_target_package, package_name) != 0) {
+        clear_injected(g_target_package);
+    }
+
     unload_target_state();
 
     if (package_name != nullptr && package_name[0] != '\0') {
@@ -271,5 +283,8 @@ __attribute__((destructor()))
 static void ncore_cleanup() {
     LOGD("ncore: cleanup");
     unhook_all();
+    if (g_target_package != nullptr) {
+        clear_injected(g_target_package);
+    }
     unload_target_state();
 }
