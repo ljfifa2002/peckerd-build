@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <cerrno>
 
 #define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
 #define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
