@@ -5,6 +5,34 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+
+// Load a file into a local anonymous memfd and return the fd.
+// The caller should close the fd after the remote dlopen completes.
+// Returns -1 on failure.
+static int local_memfd_from_file(const char* path) {
+    int src = open(path, O_RDONLY);
+    if (src < 0) { LOGE("local_memfd: open(%s) errno=%d", path, errno); return -1; }
+
+    struct stat st;
+    if (fstat(src, &st) < 0) { close(src); return -1; }
+    size_t size = (size_t)st.st_size;
+
+    int mfd = (int)syscall(__NR_memfd_create, "lib", MFD_CLOEXEC);
+    if (mfd < 0) { LOGE("local_memfd: memfd_create errno=%d", errno); close(src); return -1; }
+
+    ftruncate(mfd, (off_t)size);
+    void* mapped = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, src, 0);
+    close(src);
+    if (mapped == MAP_FAILED) { close(mfd); return -1; }
+    write(mfd, mapped, size);
+    munmap(mapped, size);
+    return mfd;
+}
 
 static void* remote_alloc_string(pid_t pid, const char* str) {
     if (pid <= 0 || str == nullptr || str[0] == '\0') {
@@ -34,18 +62,34 @@ static void* inject_so_handle_by_pid(pid_t pid, const char* so_path) {
         return nullptr;
     }
 
+    // Load the library into a local memfd so the remote dlopen sees
+    // "/proc/<our_pid>/fd/<n>" which the linker resolves to "memfd:lib (deleted)".
+    // This prevents the real file path from appearing in /proc/<remote>/maps.
+    int mfd = local_memfd_from_file(so_path);
+    char load_path[64];
+    const char* dlopen_path;
+    if (mfd >= 0) {
+        snprintf(load_path, sizeof(load_path), "/proc/%d/fd/%d", getpid(), mfd);
+        dlopen_path = load_path;
+    } else {
+        LOGE("inject_so_handle_by_pid: memfd failed, falling back to direct path");
+        dlopen_path = so_path;
+        mfd = -1;
+    }
+
     bool attached = false;
     void* remote_path = nullptr;
     void* handle = nullptr;
 
     if (!attach_process(pid)) {
         LOGE("inject_so_handle_by_pid: attach failed, pid=%d", pid);
+        if (mfd >= 0) close(mfd);
         return nullptr;
     }
     attached = true;
     LOGI("inject_so_handle_by_pid: attached to pid=%d", pid);
 
-    remote_path = remote_alloc_string(pid, so_path);
+    remote_path = remote_alloc_string(pid, dlopen_path);
     if (remote_path == nullptr) {
         LOGE("inject_so_handle_by_pid: remote_alloc_string failed");
         goto fail;
@@ -87,6 +131,8 @@ static void* inject_so_handle_by_pid(pid_t pid, const char* so_path) {
     );
     remote_path = nullptr;
 
+    if (mfd >= 0) { close(mfd); mfd = -1; }
+
     if (!detach_process(pid)) {
         LOGE("inject_so_handle_by_pid: detach failed after success");
         return nullptr;
@@ -103,7 +149,7 @@ fail:
             remote_path
         );
     }
-
+    if (mfd >= 0) close(mfd);
     if (attached) {
         detach_process(pid);
     }
