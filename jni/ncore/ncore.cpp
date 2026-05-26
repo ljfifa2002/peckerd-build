@@ -10,7 +10,13 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <cerrno>
+
+// memfd_create is not declared in older NDK headers; call via syscall directly.
+static int ncore_memfd_create(const char* name, unsigned int flags) {
+    return (int)syscall(__NR_memfd_create, name, flags);
+}
 
 // ---------------------------------------------------------------------------
 // memfd_load: load a .so from disk via an anonymous memfd so the real file
@@ -30,7 +36,7 @@ static void* memfd_load(const char* path, int dlopen_flags) {
     size_t size = (size_t)st.st_size;
 
     // Use a neutral name — anything without the real library name.
-    int mfd = memfd_create("lib", MFD_CLOEXEC);
+    int mfd = ncore_memfd_create("lib", MFD_CLOEXEC);
     if (mfd < 0) {
         LOGE("ncore: memfd_create errno=%d", errno);
         close(src);
