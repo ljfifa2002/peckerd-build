@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <unistd.h>
