@@ -9,7 +9,55 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <cerrno>
+
+// ---------------------------------------------------------------------------
+// memfd_load: load a .so from disk via an anonymous memfd so the real file
+// path never appears in /proc/self/maps.  The mapping shows as
+// "memfd:<name> (deleted)" instead of the original path.
+// Returns dlopen handle or nullptr on failure.
+// ---------------------------------------------------------------------------
+static void* memfd_load(const char* path, int dlopen_flags) {
+    int src = open(path, O_RDONLY);
+    if (src < 0) {
+        LOGE("ncore: memfd_load open(%s) errno=%d", path, errno);
+        return nullptr;
+    }
+
+    struct stat st;
+    if (fstat(src, &st) < 0) { close(src); return nullptr; }
+    size_t size = (size_t)st.st_size;
+
+    // Use a neutral name — anything without the real library name.
+    int mfd = memfd_create("lib", MFD_CLOEXEC);
+    if (mfd < 0) {
+        LOGE("ncore: memfd_create errno=%d", errno);
+        close(src);
+        return nullptr;
+    }
+
+    if (ftruncate(mfd, (off_t)size) < 0) { close(mfd); close(src); return nullptr; }
+
+    // mmap source file and write to memfd
+    void* mapped = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, src, 0);
+    close(src);
+    if (mapped == MAP_FAILED) { close(mfd); return nullptr; }
+
+    ssize_t written = write(mfd, mapped, size);
+    munmap(mapped, size);
+    if (written != (ssize_t)size) { close(mfd); return nullptr; }
+
+    // dlopen via /proc/self/fd/<n>
+    char fd_path[64];
+    snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", mfd);
+    void* handle = dlopen(fd_path, dlopen_flags);
+    close(mfd);   // handle keeps the mapping alive; fd itself can be closed
+
+    if (!handle) LOGE("ncore: memfd dlopen(%s) failed: %s", path, dlerror());
+    else          LOGI("ncore: memfd loaded %s", path);
+    return handle;
+}
 
 #define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
 #define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
@@ -149,9 +197,9 @@ static void preload_deps(const char* so_path) {
     for (int i = 0; deps[i] != nullptr; i++) {
         char dep_path[512] = {0};
         snprintf(dep_path, sizeof(dep_path), "%.*s%s", (int)dir_len, so_path, deps[i]);
-        void* h = dlopen(dep_path, RTLD_NOW | RTLD_GLOBAL);
+        void* h = memfd_load(dep_path, RTLD_NOW | RTLD_GLOBAL);
         if (h == nullptr) {
-            LOGD("ncore: preload %s skipped: %s", dep_path, dlerror());
+            LOGD("ncore: preload %s skipped", dep_path);
         } else {
             LOGI("ncore: preloaded %s", dep_path);
         }
@@ -185,7 +233,7 @@ static bool load_payload_if_needed(const char* package_name) {
     unhook_all();
     preload_deps(g_target_so);
 
-    void* handle = dlopen(g_target_so, RTLD_NOW | RTLD_NODELETE | RTLD_GLOBAL);
+    void* handle = memfd_load(g_target_so, RTLD_NOW | RTLD_NODELETE | RTLD_GLOBAL);
     if (handle == nullptr) {
         LOGE("ncore: dlopen failed for %s: %s", g_target_so, dlerror());
         return false;
