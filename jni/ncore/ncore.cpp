@@ -362,17 +362,16 @@ DECLARE_HOOK(vfork, pid_t, void) {
 }
 
 extern "C" void ainject(const char* package_name, const char* so_path) {
-    // If switching to a different target package, clear the old package's lock
-    // and reset injection state so the new target can be injected fresh.
-    bool same_package = (g_target_package != nullptr && package_name != nullptr &&
-                         strcmp(g_target_package, package_name) == 0);
-    if (!same_package) {
-        if (g_target_package != nullptr) clear_injected(g_target_package);
-        unload_target_state();  // resets g_injection_done for new target
+    // Always reset injection state when a new task starts: clear the per-package
+    // lock file and reset g_injection_done so the next fork triggers a fresh
+    // payload load. The same_package check that preserved g_injection_done was
+    // removed because each external Ninjector invocation is a new task and needs
+    // a clean slate regardless of whether the package name changed.
+    if (g_target_package != nullptr) {
+        clear_injected(g_target_package);
     }
-    // Same package: preserve g_injection_done so re-arm doesn't restart the loop.
+    unload_target_state();  // resets g_injection_done, g_payload_loaded
 
-    // Refresh target strings (free old values first to avoid leaks).
     if (g_target_package != nullptr) { free(g_target_package); g_target_package = nullptr; }
     if (g_target_so     != nullptr) { free(g_target_so);      g_target_so      = nullptr; }
     if (package_name != nullptr && package_name[0] != '\0') {
@@ -387,7 +386,9 @@ extern "C" void ainject(const char* package_name, const char* so_path) {
          g_target_so != nullptr ? g_target_so : "(null)");
 
     if (g_spawn_hooks_installed || hooks_state_active()) {
-        LOGI("ncore: spawn hooks already installed, skip");
+        // Hooks already installed by this or a previous ncore instance.
+        // g_injection_done was reset above so the next fork will load payload fresh.
+        LOGI("ncore: spawn hooks already installed, reusing (injection_done reset)");
         return;
     }
 

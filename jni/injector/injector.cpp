@@ -201,12 +201,24 @@ bool prepare_spawn_in_zygote(pid_t zygote_pid,
         goto fail;
     }
 
+    // Prefer the already-loaded ncore instance (RTLD_DEFAULT) so that ainject()
+    // resets g_injection_done and clears the lock file in the instance that
+    // actually owns the fork/vfork hooks. Falling back to the newly-loaded handle
+    // only when ncore was not previously in the global namespace.
     remote_ainject = call_remote_function<void*, void*, const char*>(
         zygote_pid,
         reinterpret_cast<void*>(dlsym),
-        handle,
+        static_cast<void*>(nullptr),  // RTLD_DEFAULT
         reinterpret_cast<const char*>(remote_sym_name)
     );
+    if (remote_ainject == nullptr) {
+        remote_ainject = call_remote_function<void*, void*, const char*>(
+            zygote_pid,
+            reinterpret_cast<void*>(dlsym),
+            handle,
+            reinterpret_cast<const char*>(remote_sym_name)
+        );
+    }
     if (remote_ainject == nullptr) {
         LOGE("prepare_spawn_in_zygote: dlsym(ainject) failed");
         goto fail;
