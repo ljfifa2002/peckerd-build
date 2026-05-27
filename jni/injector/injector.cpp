@@ -269,24 +269,26 @@ fail:
 }
 
 bool clear_spawn_in_zygote(pid_t zygote_pid, const char* ncore_path) {
-    if (zygote_pid <= 0 || ncore_path == nullptr || ncore_path[0] == '\0') {
+    if (zygote_pid <= 0) {
         LOGE("clear_spawn_in_zygote: invalid args");
         return false;
     }
+    (void)ncore_path; // unused: we find aclear via RTLD_DEFAULT, not a new load
+
+    // Do NOT load a new ncore instance here. Each load via memfd creates a
+    // separate library instance with independent Dobby state and globals.
+    // Calling aclear() on a fresh instance leaves the real hooks (installed by
+    // the first instance) in place and causes double-hooking on the next inject.
+    //
+    // Instead, find aclear() in the already-loaded ncore via RTLD_DEFAULT.
+    // ncore was loaded with RTLD_GLOBAL, so its symbols are in the global namespace.
 
     bool attached = false;
-    void* handle = nullptr;
     void* remote_sym_name = nullptr;
     void* remote_aclear = nullptr;
 
-    handle = inject_so_handle_by_pid(zygote_pid, ncore_path);
-    if (handle == nullptr) {
-        LOGE("clear_spawn_in_zygote: inject ncore failed");
-        return false;
-    }
-
     if (!attach_process(zygote_pid)) {
-        LOGE("clear_spawn_in_zygote: re-attach zygote failed");
+        LOGE("clear_spawn_in_zygote: attach failed");
         return false;
     }
     attached = true;
@@ -297,24 +299,29 @@ bool clear_spawn_in_zygote(pid_t zygote_pid, const char* ncore_path) {
         goto fail;
     }
 
+    // RTLD_DEFAULT (nullptr) searches the global symbol namespace in zygote.
     remote_aclear = call_remote_function<void*, void*, const char*>(
         zygote_pid,
         reinterpret_cast<void*>(dlsym),
-        handle,
+        static_cast<void*>(nullptr),
         reinterpret_cast<const char*>(remote_sym_name)
     );
-    if (remote_aclear == nullptr) {
-        LOGE("clear_spawn_in_zygote: dlsym(aclear) failed");
-        goto fail;
-    }
-
-    call_remote_call<void>(zygote_pid, reinterpret_cast<long>(remote_aclear), 0, nullptr);
 
     call_remote_function<void, void*>(
         zygote_pid,
         reinterpret_cast<void*>(free),
         remote_sym_name
     );
+    remote_sym_name = nullptr;
+
+    if (remote_aclear == nullptr) {
+        // ncore not loaded yet — nothing to clear.
+        LOGI("clear_spawn_in_zygote: aclear not found (ncore not loaded), nothing to clear");
+        detach_process(zygote_pid);
+        return true;
+    }
+
+    call_remote_call<void>(zygote_pid, reinterpret_cast<long>(remote_aclear), 0, nullptr);
 
     if (!detach_process(zygote_pid)) {
         LOGE("clear_spawn_in_zygote: detach failed");

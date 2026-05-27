@@ -67,6 +67,12 @@ static void* memfd_load(const char* path, int dlopen_flags) {
 
 #define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
 #define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
+// Per-zygote-PID file that marks fork/vfork hooks as installed.
+// Keyed by PID so a zygote restart (new PID) gets a clean slate.
+// Guards against double-hooking when multiple ncore SO instances are loaded
+// via memfd (each memfd gets a unique inode, making the linker treat them as
+// separate libraries with independent globals and Dobby state).
+#define NINJECTOR_HOOKS_PREFIX "/data/local/tmp/ncore_hooks_"
 
 // Build lock-file path for a package name.
 // Returns length written (not including null), or 0 on overflow.
@@ -102,6 +108,31 @@ static void clear_injected(const char* pkg) {
     char path[256];
     if (!lock_path(path, sizeof(path), pkg)) return;
     unlink(path);
+}
+
+// Cross-instance hook-state helpers.
+// Use getpid() (= zygote PID) so a zygote restart automatically invalidates
+// the previous state without any explicit cleanup.
+static void hooks_state_path(char* buf, size_t buf_size) {
+    snprintf(buf, buf_size, "%s%d", NINJECTOR_HOOKS_PREFIX, getpid());
+}
+
+static bool hooks_state_active() {
+    char path[64];
+    hooks_state_path(path, sizeof(path));
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+static void hooks_state_set(bool active) {
+    char path[64];
+    hooks_state_path(path, sizeof(path));
+    if (active) {
+        int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+        if (fd >= 0) close(fd);
+    } else {
+        unlink(path);
+    }
 }
 
 static char* g_target_package = nullptr;
@@ -187,6 +218,10 @@ static void unhook_all() {
 
 extern "C" void aclear() {
     LOGI("ncore: aclear");
+    // Remove state file BEFORE unhooking so a concurrent ainject() in another
+    // ncore instance sees no active hooks and can safely re-install them after
+    // this unhook completes.
+    hooks_state_set(false);
     unhook_all();
     if (g_target_package != nullptr) {
         clear_injected(g_target_package);
@@ -351,7 +386,7 @@ extern "C" void ainject(const char* package_name, const char* so_path) {
          g_target_package != nullptr ? g_target_package : "(null)",
          g_target_so != nullptr ? g_target_so : "(null)");
 
-    if (g_spawn_hooks_installed) {
+    if (g_spawn_hooks_installed || hooks_state_active()) {
         LOGI("ncore: spawn hooks already installed, skip");
         return;
     }
@@ -359,6 +394,7 @@ extern "C" void ainject(const char* package_name, const char* so_path) {
     INSTALL_HOOK(fork, fork);
     INSTALL_HOOK(vfork, vfork);
     g_spawn_hooks_installed = true;
+    hooks_state_set(true);
     LOGI("ncore: spawn hooks installed");
 }
 
