@@ -335,10 +335,13 @@ DECLARE_HOOK(fork, pid_t, void) {
     if (pid == 0) {
         // Child process
         if (already_done) {
-            // A previous child already loaded the payload; this is a subsequent
-            // worker process of a multi-process app.  Skip hook installation so
-            // the worker runs unmodified and the app startup loop terminates.
+            // Parent confirmed target already injected; skip hooks in this child.
             LOGI("ncore: child forked pid=%d, injection already done, skipping hooks",
+                 getpid());
+        } else if (g_target_package != nullptr && is_already_injected(g_target_package)) {
+            // Lock file exists: target loaded payload in a concurrent sibling.
+            // Skip hook installation to avoid redundant work.
+            LOGI("ncore: child forked pid=%d, target already injected via lock, skipping hooks",
                  getpid());
         } else {
             LOGI("ncore: child forked pid=%d", getpid());
@@ -346,11 +349,14 @@ DECLARE_HOOK(fork, pid_t, void) {
         }
     } else if (pid > 0) {
         LOGD("ncore: parent observed fork child=%d", pid);
-        // Mark injection as dispatched after the first target child is forked.
-        // Subsequent forks will inherit g_injection_done=true and skip hooks.
-        if (!already_done && g_target_package != nullptr) {
+        // Only mark injection done once the target package has confirmed it loaded
+        // payload (lock file created by mark_injected in the child). This prevents
+        // pre-marking done when an unrelated process (e.g. a content provider) is
+        // forked before the actual target app, which would cause the target fork to
+        // inherit already_done=true and skip hook installation entirely.
+        if (!already_done && g_target_package != nullptr && is_already_injected(g_target_package)) {
             g_injection_done = true;
-            LOGI("ncore: marked injection done after child=%d", pid);
+            LOGI("ncore: marked injection done, target confirmed: %s", g_target_package);
         }
     }
     return pid;
