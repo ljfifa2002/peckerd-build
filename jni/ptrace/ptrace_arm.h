@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/ptrace.h>
+#include <asm/ptrace.h>   // defines struct pt_regs and ARM_sp/ARM_lr/ARM_pc/ARM_cpsr
 #include <linux/uio.h>
 #include <elf.h>
 #include <cstddef>
@@ -16,24 +17,13 @@
 #error "This file only supports arm (armeabi-v7a)"
 #endif
 
-// ARM32 general-purpose register layout returned by PTRACE_GETREGSET/NT_PRSTATUS:
-//   uregs[0-12]  = r0-r12
-//   uregs[13]    = sp (r13)
-//   uregs[14]    = lr (r14)
-//   uregs[15]    = pc (r15)
-//   uregs[16]    = cpsr
-//   uregs[17]    = orig_r0
-struct pt_regs {
-    unsigned long uregs[18];
-};
-
+// ARM32 AAPCS: first 4 arguments passed in r0-r3.
 #define REGS_ARG_NUM 4
-#define ARM_sp  uregs[13]
-#define ARM_lr  uregs[14]
-#define ARM_pc  uregs[15]
-#define ARM_cpsr uregs[16]
 
-#define CPSR_T_MASK (1u << 5)   // Thumb execution state bit
+// CPSR Thumb execution state bit (T bit).
+#ifndef CPSR_T_MASK
+#define CPSR_T_MASK (1u << 5)
+#endif
 
 bool attach_process(pid_t pid);
 bool detach_process(pid_t pid);
