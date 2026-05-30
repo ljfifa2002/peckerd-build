@@ -65,7 +65,11 @@ static void* memfd_load(const char* path, int dlopen_flags) {
     return handle;
 }
 
-#define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
+#if defined(__aarch64__)
+#define NINJECTOR_RESULT_FILE "/data/local/tmp/pecker64/ninjector_result.json"
+#else
+#define NINJECTOR_RESULT_FILE "/data/local/tmp/pecker32/ninjector_result.json"
+#endif
 #define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
 // Per-zygote-PID file that marks fork/vfork hooks as installed.
 // Keyed by PID so a zygote restart (new PID) gets a clean slate.

@@ -14,10 +14,15 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#define NINJECTOR_RESULT_FILE "/data/local/tmp/ninjector_result.json"
+#if defined(__aarch64__)
+#define NINJECTOR_RESULT_FILE "/data/local/tmp/pecker64/ninjector_result.json"
+#else
+#define NINJECTOR_RESULT_FILE "/data/local/tmp/pecker32/ninjector_result.json"
+#endif
 
 static void wait_for_spawn_callback(std::promise<int>& promise_obj) {
-    // truncate 清空旧内容，保留文件（不 unlink），app 进程无法在该目录创建新文件
+    // truncate clears stale content; pecker64/pecker32 is chmod 777 so the app
+    // process can create this file directly — no pre-creation needed.
     int clear_fd = open(NINJECTOR_RESULT_FILE, O_WRONLY | O_TRUNC);
     if (clear_fd >= 0) close(clear_fd);
 
