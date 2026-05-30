@@ -278,6 +278,15 @@ static bool load_payload_if_needed(const char* package_name) {
     unhook_all();
     preload_deps(g_target_so);
 
+    // Expose the exact process name to payload_init() via an env variable so it
+    // can filter by sub-process name (:appbrand, :push, etc.) at constructor time.
+    // /proc/self/cmdline is not yet updated when the constructor runs (that only
+    // happens later via android_os_Process_setArgV0), so this is the only
+    // reliable way to pass the name without modifying the payload's ABI.
+    if (package_name != nullptr) {
+        setenv("NCORE_PROCESS_NAME", package_name, 1);
+    }
+
     void* handle = memfd_load(g_target_so, RTLD_NOW | RTLD_NODELETE | RTLD_GLOBAL);
     if (handle == nullptr) {
         LOGE("ncore: dlopen failed for %s: %s", g_target_so, dlerror());
