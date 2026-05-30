@@ -1,6 +1,10 @@
 #include "injector.h"
 #include "../common/log.h"
+#if defined(__aarch64__)
 #include "../ptrace/ptrace_arm64.h"
+#else
+#include "../ptrace/ptrace_arm.h"
+#endif
 
 #include <cstdlib>
 #include <cstring>
