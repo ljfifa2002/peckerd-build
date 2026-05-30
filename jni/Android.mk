@@ -4,11 +4,18 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE := Ninjector
 
+# Select architecture-specific ptrace implementation
+ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
+    PTRACE_SRC := ptrace/ptrace_arm64.cpp
+else
+    PTRACE_SRC := ptrace/ptrace_arm.cpp
+endif
+
 LOCAL_SRC_FILES := \
     main.cpp \
     symbi/symbi_injector.cpp \
     process/process.cpp \
-    ptrace/ptrace_arm64.cpp \
+    $(PTRACE_SRC) \
     injector/injector.cpp
 
 LOCAL_C_INCLUDES := $(LOCAL_PATH)

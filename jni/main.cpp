@@ -142,7 +142,11 @@ int main(int argc, char* argv[]) {
     }
 
     if (clear_mode) {
+#if defined(__aarch64__)
         pid_t zygote_pid = get_pid("zygote64");
+#else
+        pid_t zygote_pid = get_pid("zygote");
+#endif
         if (zygote_pid <= 0) {
             LOGE("main: zygote64 not found");
             return -1;
@@ -175,7 +179,11 @@ int main(int argc, char* argv[]) {
             return -1;
         }
 
+#if defined(__aarch64__)
         pid = get_pid("zygote64");
+#else
+        pid = get_pid("zygote");
+#endif
         if (pid <= 0) {
             LOGE("main: zygote64 not found");
             return -1;

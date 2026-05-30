@@ -17,6 +17,19 @@
 #include <unistd.h>
 #include <vector>
 
+// Use the correct ELF word size for the running ABI.
+#if defined(__aarch64__)
+using Elf_Ehdr = Elf64_Ehdr;
+using Elf_Shdr = Elf64_Shdr;
+using Elf_Phdr = Elf64_Phdr;
+using Elf_Sym  = Elf64_Sym;
+#else
+using Elf_Ehdr = Elf32_Ehdr;
+using Elf_Shdr = Elf32_Shdr;
+using Elf_Phdr = Elf32_Phdr;
+using Elf_Sym  = Elf32_Sym;
+#endif
+
 #define SYMBI_TARGET_SYMBOL "_Z27android_os_Process_setArgV0P7_JNIEnvP8_jobjectP8_jstring"
 
 namespace {
@@ -101,8 +114,8 @@ uintptr_t get_symbol_offset_from_elf(const std::string& elf_path, const char* sy
         return 0;
     }
 
-    auto* ehdr = reinterpret_cast<Elf64_Ehdr*>(map_base);
-    auto* shdr = reinterpret_cast<Elf64_Shdr*>(reinterpret_cast<uintptr_t>(map_base) + ehdr->e_shoff);
+    auto* ehdr = reinterpret_cast<Elf_Ehdr*>(map_base);
+    auto* shdr = reinterpret_cast<Elf_Shdr*>(reinterpret_cast<uintptr_t>(map_base) + ehdr->e_shoff);
 
     uintptr_t symbol_offset = 0;
     for (int i = 0; i < ehdr->e_shnum; ++i) {
@@ -110,8 +123,8 @@ uintptr_t get_symbol_offset_from_elf(const std::string& elf_path, const char* sy
             continue;
         }
 
-        auto* syms = reinterpret_cast<Elf64_Sym*>(reinterpret_cast<uintptr_t>(map_base) + shdr[i].sh_offset);
-        int count = static_cast<int>(shdr[i].sh_size / sizeof(Elf64_Sym));
+        auto* syms = reinterpret_cast<Elf_Sym*>(reinterpret_cast<uintptr_t>(map_base) + shdr[i].sh_offset);
+        int count = static_cast<int>(shdr[i].sh_size / sizeof(Elf_Sym));
         auto* strtab = reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(map_base) + shdr[shdr[i].sh_link].sh_offset);
         for (int j = 0; j < count; ++j) {
             if (strcmp(strtab + syms[j].st_name, symbol_name) == 0) {
@@ -125,7 +138,7 @@ uintptr_t get_symbol_offset_from_elf(const std::string& elf_path, const char* sy
     }
 
     uintptr_t load_bias = 0;
-    auto* phdr = reinterpret_cast<Elf64_Phdr*>(reinterpret_cast<uintptr_t>(map_base) + ehdr->e_phoff);
+    auto* phdr = reinterpret_cast<Elf_Phdr*>(reinterpret_cast<uintptr_t>(map_base) + ehdr->e_phoff);
     for (int i = 0; i < ehdr->e_phnum; ++i) {
         if (phdr[i].p_type == PT_LOAD) {
             load_bias = phdr[i].p_vaddr;

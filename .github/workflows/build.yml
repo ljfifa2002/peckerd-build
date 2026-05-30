@@ -20,6 +20,8 @@ jobs:
         # Resolved from jni/: $GITHUB_WORKSPACE/../TInjector-main
         run: |
           git clone --depth=1 https://github.com/Mrack/TInjector.git "$GITHUB_WORKSPACE/../TInjector-main"
+          echo "TInjector ABIs available:"
+          ls "$GITHUB_WORKSPACE/../TInjector-main/jni/core/" || true
 
       - name: Setup Android NDK r25c
         uses: nttld/setup-ndk@v1
@@ -28,17 +30,74 @@ jobs:
           ndk-version: r25c
           add-to-path: true
 
+      - name: Build ARM32 Thumb stub → generated_stub_arm.h
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          # Find the ARM32 Thumb clang from NDK toolchain
+          CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
+
+          STUB_DIR="jni/symbi/stub_src"
+          # Compile stub.c for ARM32 Thumb to a bare binary (no OS entry point)
+          # -mthumb: Thumb-2 instruction set
+          # -fPIC: position-independent (shellcode will be relocated at runtime)
+          # -nostdlib: no libc; all functions called via function pointers in TStub
+          # -T helper.lds: linker script puts .text.entrypoint first in the output
+          "$CLANG" \
+            -target armv7a-linux-androideabi21 \
+            -mthumb \
+            -Os \
+            -fPIC \
+            -nostdlib \
+            -nostartfiles \
+            -Wl,-T,"$STUB_DIR/helper.lds" \
+            -Wl,--strip-all \
+            -Wl,-Map=/tmp/stub_arm.map \
+            -o /tmp/stub_arm.elf \
+            "$STUB_DIR/stub.c" \
+            -I "$STUB_DIR" \
+            -I "jni" \
+            -include jni.h \
+            -I "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" \
+            -I "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/arm-linux-androideabi"
+
+          # Extract raw .text section as the stub binary
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" \
+            -O binary \
+            --only-section=.text \
+            /tmp/stub_arm.elf /tmp/stub_arm.bin
+
+          echo "ARM32 stub binary size: $(wc -c < /tmp/stub_arm.bin) bytes"
+
+          # Generate the C header
+          python3 "$STUB_DIR/bin2header.py" \
+            /tmp/stub_arm.bin \
+            "$STUB_DIR/generated_stub_arm.h" \
+            stub_binary
+
+          echo "Generated $STUB_DIR/generated_stub_arm.h:"
+          head -5 "$STUB_DIR/generated_stub_arm.h"
+
       - name: Build with ndk-build
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           $ANDROID_NDK_HOME/ndk-build
 
-      - name: Upload artifacts
+      - name: Upload arm64-v8a artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Ninjector-arm64-v8a
           path: |
             libs/arm64-v8a/Ninjector
             libs/arm64-v8a/libncore.so
+          if-no-files-found: error
+
+      - name: Upload armeabi-v7a artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ninjector-armeabi-v7a
+          path: |
+            libs/armeabi-v7a/Ninjector
+            libs/armeabi-v7a/libncore.so
           if-no-files-found: error
