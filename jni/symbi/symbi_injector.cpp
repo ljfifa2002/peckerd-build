@@ -79,15 +79,13 @@ std::vector<MemoryMap> get_process_maps(pid_t pid) {
         char dev[16] = {0};
         char path_buf[512] = {0};
         unsigned long inode = 0;
+        unsigned long s_l = 0, e_l = 0, off_l = 0;
         if (sscanf(line.c_str(),
                    "%lx-%lx %4s %lx %15s %lu %511s",
-                   &map.start,
-                   &map.end,
-                   perms,
-                   &map.offset,
-                   dev,
-                   &inode,
-                   path_buf) >= 6) {
+                   &s_l, &e_l, perms, &off_l, dev, &inode, path_buf) >= 6) {
+            map.start  = static_cast<uintptr_t>(s_l);
+            map.end    = static_cast<uintptr_t>(e_l);
+            map.offset = static_cast<size_t>(off_l);
             memcpy(map.perms, perms, sizeof(map.perms));
             map.pathname = path_buf;
             maps.push_back(map);
@@ -167,7 +165,10 @@ uintptr_t get_module_base(pid_t pid, const std::string& lib_name) {
         uintptr_t start = 0;
         uintptr_t offset = 0;
         char perms[5] = {0};
-        if (sscanf(line.c_str(), "%lx-%*x %4s %lx", &start, perms, &offset) == 3) {
+        unsigned long start_l = 0, offset_l = 0;
+        if (sscanf(line.c_str(), "%lx-%*x %4s %lx", &start_l, perms, &offset_l) == 3) {
+            start  = static_cast<uintptr_t>(start_l);
+            offset = static_cast<uintptr_t>(offset_l);
             if (offset == 0 && perms[3] != 's') {
                 return start;
             }
@@ -382,7 +383,7 @@ bool collect_symbi_context(pid_t zygote_pid,
 
     if (ctx->art_method_slot == 0) {
         close(mem_fd);
-        LOGE("symbi: failed to find art_method_slot for setArgV0=0x%lx", ctx->set_argv0_address);
+        LOGE("symbi: failed to find art_method_slot for setArgV0=0x%lx", (unsigned long)ctx->set_argv0_address);
         return false;
     }
 
@@ -402,10 +403,10 @@ bool collect_symbi_context(pid_t zygote_pid,
     LOGI("symbi: prepared zygote=%d uid=%d setArgV0=0x%lx slot=0x%lx original=0x%lx shellcode=0x%lx so=%s",
          zygote_pid,
          static_cast<int>(ctx->target_uid),
-         ctx->set_argv0_address,
-         ctx->art_method_slot,
-         ctx->original_ptr,
-         ctx->shellcode_base,
+         (unsigned long)ctx->set_argv0_address,
+         (unsigned long)ctx->art_method_slot,
+         (unsigned long)ctx->original_ptr,
+         (unsigned long)ctx->shellcode_base,
          so_path);
     return true;
 }
@@ -439,7 +440,7 @@ bool write_stub_and_patch_slot(int mem_fd, const SymbiContext& ctx) {
                                   stub_copy.size(),
                                   static_cast<off_t>(ctx.shellcode_base));
     if (written_code != static_cast<ssize_t>(stub_copy.size())) {
-        LOGE("symbi: failed to write stub to shellcode_base=0x%lx", ctx.shellcode_base);
+        LOGE("symbi: failed to write stub to shellcode_base=0x%lx", (unsigned long)ctx.shellcode_base);
         return false;
     }
 
@@ -449,12 +450,12 @@ bool write_stub_and_patch_slot(int mem_fd, const SymbiContext& ctx) {
                                  sizeof(new_ptr),
                                  static_cast<off_t>(ctx.art_method_slot));
     if (written_ptr != static_cast<ssize_t>(sizeof(new_ptr))) {
-        LOGE("symbi: failed to patch art_method_slot=0x%lx", ctx.art_method_slot);
+        LOGE("symbi: failed to patch art_method_slot=0x%lx", (unsigned long)ctx.art_method_slot);
         return false;
     }
 
     LOGI("symbi: wrote stub to 0x%lx and patched slot=0x%lx -> 0x%lx",
-         ctx.shellcode_base, ctx.art_method_slot, new_ptr);
+         (unsigned long)ctx.shellcode_base, (unsigned long)ctx.art_method_slot, (unsigned long)new_ptr);
     return true;
 }
 
@@ -482,7 +483,7 @@ bool restore_original_slot(const SymbiContext& ctx) {
     resume_process(ctx.zygote_pid);
     if (ok) {
         LOGI("symbi: restore complete slot=0x%lx shellcode=0x%lx",
-             ctx.art_method_slot, ctx.shellcode_base);
+             (unsigned long)ctx.art_method_slot, (unsigned long)ctx.shellcode_base);
     } else {
         LOGE("symbi: restore failed");
     }
