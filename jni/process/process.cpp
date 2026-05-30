@@ -114,11 +114,12 @@ const char* get_module_name(pid_t pid, uintptr_t addr) {
 
     char line[1024] = {0};
     while (fgets(line, sizeof(line), fp) != nullptr) {
-        uintptr_t start = 0;
-        uintptr_t end = 0;
-        if (sscanf(line, "%lx-%lx", &start, &end) != 2) {
+        unsigned long start_l = 0, end_l = 0;
+        if (sscanf(line, "%lx-%lx", &start_l, &end_l) != 2) {
             continue;
         }
+        uintptr_t start = static_cast<uintptr_t>(start_l);
+        uintptr_t end   = static_cast<uintptr_t>(end_l);
 
         if (addr >= start && addr < end) {
             char* path = strchr(line, '/');
