@@ -88,8 +88,9 @@ jobs:
 
       - name: Update file timestamps to Shanghai time
         run: |
-          find libs -type f \( -name "Ninjector" -o -name "libncore.so" \) | xargs touch
-          echo "Timestamps updated: $(date)"
+          BEIJING_TS=$(date -u -d '+8 hours' +%Y%m%d%H%M.%S)
+          find libs -type f \( -name "Ninjector" -o -name "libncore.so" \) | xargs touch -t "$BEIJING_TS"
+          echo "Timestamps set to: $(date -u -d '+8 hours' '+%Y-%m-%d %H:%M:%S CST')"
 
       - name: Upload arm64-v8a artifacts
         uses: actions/upload-artifact@v4
