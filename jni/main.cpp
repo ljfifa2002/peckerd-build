@@ -15,24 +15,37 @@
 #include <sys/stat.h>
 
 #if defined(__aarch64__)
-#define NINJECTOR_RESULT_FILE "/data/local/tmp/pecker64/ninjector_result.json"
+#define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker64"
 #else
-#define NINJECTOR_RESULT_FILE "/data/local/tmp/pecker32/ninjector_result.json"
+#define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker32"
 #endif
+// Two fixed result files — one per task type, matching ncore.cpp.
+#define NINJECTOR_RESULT_APK       NINJECTOR_RESULT_DIR "/ninjector_apk_result.json"
+#define NINJECTOR_RESULT_APPLET_WX NINJECTOR_RESULT_DIR "/ninjector_applet_wx_result.json"
 
-static void wait_for_spawn_callback(std::promise<int>& promise_obj) {
-    // truncate clears stale content; pecker64/pecker32 is chmod 777 so the app
-    // process can create this file directly — no pre-creation needed.
-    int clear_fd = open(NINJECTOR_RESULT_FILE, O_WRONLY | O_TRUNC);
-    if (clear_fd >= 0) close(clear_fd);
+static const char* result_file_for_pkg(const char* pkg) {
+    if (pkg != nullptr && strncmp(pkg, "com.tencent.mm", 14) == 0) {
+        return NINJECTOR_RESULT_APPLET_WX;
+    }
+    return NINJECTOR_RESULT_APK;
+}
+
+static void wait_for_spawn_callback(std::promise<int>& promise_obj,
+                                    const std::string& package_name) {
+    const char* result_path = result_file_for_pkg(package_name.c_str());
+
+    // Remove any stale result from a previous run of this task type.
+    // unlink (directory-permission based) works even when the file is owned
+    // by a different app uid from a previous task, unlike O_TRUNC.
+    unlink(result_path);
 
     int callback_pid = -1;
     std::string payload;
 
     for (int i = 0; i < 200; ++i) {
         struct stat st{};
-        if (stat(NINJECTOR_RESULT_FILE, &st) == 0 && st.st_size > 0) {
-            std::ifstream file(NINJECTOR_RESULT_FILE);
+        if (stat(result_path, &st) == 0 && st.st_size > 0) {
+            std::ifstream file(result_path);
             if (file.good()) {
                 std::getline(file, payload, '\0');
             }
@@ -52,9 +65,8 @@ static void wait_for_spawn_callback(std::promise<int>& promise_obj) {
     if (pid_pos != nullptr) {
         callback_pid = atoi(pid_pos + strlen(pid_key));
     }
-    // truncate 而不是 unlink，保留文件供下次使用
-    int done_fd = open(NINJECTOR_RESULT_FILE, O_WRONLY | O_TRUNC);
-    if (done_fd >= 0) close(done_fd);
+    // Remove the result file after reading so the next task starts clean.
+    unlink(result_path);
     promise_obj.set_value(callback_pid);
 }
 
@@ -213,7 +225,9 @@ int main(int argc, char* argv[]) {
 
         std::promise<int> promise_obj;
         std::future<int> future = promise_obj.get_future();
-        std::thread callback_thread(wait_for_spawn_callback, std::ref(promise_obj));
+        std::thread callback_thread(wait_for_spawn_callback,
+                                    std::ref(promise_obj),
+                                    std::string(package_name));
 
         if (!start_target_app(package_name)) {
             callback_thread.join();

@@ -66,10 +66,23 @@ static void* memfd_load(const char* path, int dlopen_flags) {
 }
 
 #if defined(__aarch64__)
-#define NINJECTOR_RESULT_FILE "/data/local/tmp/pecker64/ninjector_result.json"
+#define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker64"
 #else
-#define NINJECTOR_RESULT_FILE "/data/local/tmp/pecker32/ninjector_result.json"
+#define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker32"
 #endif
+// Two fixed result files — one per task type.  Named by task type rather than
+// package name so the device never accumulates per-package files.
+// Determined by target package prefix: com.tencent.mm → applet, else → APK.
+#define NINJECTOR_RESULT_APK       NINJECTOR_RESULT_DIR "/ninjector_apk_result.json"
+#define NINJECTOR_RESULT_APPLET_WX NINJECTOR_RESULT_DIR "/ninjector_applet_wx_result.json"
+
+static const char* result_file_for_pkg(const char* pkg) {
+    if (pkg != nullptr && strncmp(pkg, "com.tencent.mm", 14) == 0) {
+        return NINJECTOR_RESULT_APPLET_WX;
+    }
+    return NINJECTOR_RESULT_APK;
+}
+
 #define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
 // Per-zygote-PID file that marks fork/vfork hooks as installed.
 // Keyed by PID so a zygote restart (new PID) gets a clean slate.
@@ -151,28 +164,40 @@ static bool g_spawn_hooks_installed = false;
 static bool g_injection_done = false;
 
 static void send_status_to_injector(const char* package_name, const char* so_path) {
-    char payload[512] = {0};
-    snprintf(payload,
-             sizeof(payload),
+    // Select result file by task type (not package name) so the device never
+    // accumulates per-package files.  Use g_target_package so that sub-processes
+    // like com.tencent.mm:appbrand0 still write to the applet file.
+    const char* target = (g_target_package != nullptr) ? g_target_package
+                                                        : package_name;
+    const char* result_path = result_file_for_pkg(target);
+
+    char payload_buf[512] = {0};
+    snprintf(payload_buf,
+             sizeof(payload_buf),
              "{\"pid\":%d,\"pkg\":\"%s\",\"so\":\"%s\"}",
              getpid(),
              package_name != nullptr ? package_name : "",
              so_path != nullptr ? so_path : "");
 
-    int fd = open(NINJECTOR_RESULT_FILE, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    // unlink before open: directory write permission lets us remove a file
+    // owned by a different app uid from a previous task, avoiding EACCES on
+    // the subsequent O_CREAT|O_WRONLY open.
+    unlink(result_path);
+
+    int fd = open(result_path, O_CREAT | O_WRONLY | O_TRUNC, 0666);
     if (fd < 0) {
-        LOGE("ncore: open result file failed");
+        LOGE("ncore: open result file failed path=%s errno=%d", result_path, errno);
         return;
     }
 
-    ssize_t written = write(fd, payload, strlen(payload));
+    ssize_t written = write(fd, payload_buf, strlen(payload_buf));
     if (written < 0) {
-        LOGE("ncore: write result file failed");
+        LOGE("ncore: write result file failed path=%s errno=%d", result_path, errno);
         close(fd);
         return;
     }
 
-    LOGI("ncore: sent callback payload=%s", payload);
+    LOGI("ncore: sent callback payload=%s path=%s", payload_buf, result_path);
     close(fd);
 }
 
