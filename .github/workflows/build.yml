@@ -86,26 +86,45 @@ jobs:
         run: |
           $ANDROID_NDK_HOME/ndk-build
 
-      - name: Update file timestamps to Shanghai time
+      - name: Package artifacts with Beijing timestamps
         run: |
-          BEIJING_TS=$(date -u -d '+8 hours' +%Y%m%d%H%M.%S)
-          find libs -type f \( -name "Ninjector" -o -name "libncore.so" \) | xargs touch -t "$BEIJING_TS"
-          echo "Timestamps set to: $(date -u -d '+8 hours' '+%Y-%m-%d %H:%M:%S CST')"
+          python3 - <<'PYEOF'
+          import zipfile, time, os
+
+          t = time.localtime()
+          dt = (t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
+          print(f"Packaging with timestamp: {t.tm_year}-{t.tm_mon:02d}-{t.tm_mday:02d} {t.tm_hour:02d}:{t.tm_min:02d}:{t.tm_sec:02d} CST")
+
+          def pack(zip_path, files):
+              os.makedirs(os.path.dirname(zip_path), exist_ok=True)
+              with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                  for arcname, filepath in files:
+                      info = zipfile.ZipInfo(arcname, date_time=dt)
+                      info.compress_type = zipfile.ZIP_DEFLATED
+                      with open(filepath, 'rb') as f:
+                          zf.writestr(info, f.read())
+                      print(f"  + {arcname}")
+
+          pack('/tmp/Ninjector-arm64-v8a.zip', [
+              ('Ninjector',   'libs/arm64-v8a/Ninjector'),
+              ('libncore.so', 'libs/arm64-v8a/libncore.so'),
+          ])
+          pack('/tmp/Ninjector-armeabi-v7a.zip', [
+              ('Ninjector',   'libs/armeabi-v7a/Ninjector'),
+              ('libncore.so', 'libs/armeabi-v7a/libncore.so'),
+          ])
+          PYEOF
 
       - name: Upload arm64-v8a artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Ninjector-arm64-v8a
-          path: |
-            libs/arm64-v8a/Ninjector
-            libs/arm64-v8a/libncore.so
+          path: /tmp/Ninjector-arm64-v8a.zip
           if-no-files-found: error
 
       - name: Upload armeabi-v7a artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Ninjector-armeabi-v7a
-          path: |
-            libs/armeabi-v7a/Ninjector
-            libs/armeabi-v7a/libncore.so
+          path: /tmp/Ninjector-armeabi-v7a.zip
           if-no-files-found: error
