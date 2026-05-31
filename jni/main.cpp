@@ -216,6 +216,14 @@ int main(int argc, char* argv[]) {
         LOGI("main: spawn mode zygote=%d package=%s so=%s ncore=%s",
              pid, package_name, so_path, ncore_path.c_str());
 
+        // Clear any previously-loaded ncore instance before injecting a fresh one.
+        // This prevents hook accumulation: without this, every pecker-agent task
+        // adds one more ncore instance to zygote (via memfd + RTLD_GLOBAL) and they
+        // never get unloaded.  Calling clear here keeps at most one active instance.
+        // clear_spawn_in_zygote is a no-op when ncore is not yet loaded.
+        LOGI("main: clearing previous ncore instance before spawn");
+        clear_spawn_in_zygote(pid, ncore_path.c_str());
+
         if (!prepare_spawn_in_zygote(pid, ncore_path.c_str(), package_name, so_path)) {
             LOGE("main: spawn prepare failed");
             return -1;

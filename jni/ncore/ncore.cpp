@@ -83,7 +83,12 @@ static const char* result_file_for_pkg(const char* pkg) {
     return NINJECTOR_RESULT_APK;
 }
 
-#define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
+// v2 prefix: distinguishes lock files created by this ncore version from those
+// left by older builds (which used "ncore_injected_<pkg>" without a version).
+// When old ncore instances are still loaded in zygote after a code update, they
+// read/write v1 lock files while this version uses v2 — the two never block
+// each other, so the new code always proceeds to inject and write its result file.
+#define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_v2_"
 // Per-zygote-PID file that marks fork/vfork hooks as installed.
 // Keyed by PID so a zygote restart (new PID) gets a clean slate.
 // Guards against double-hooking when multiple ncore SO instances are loaded
