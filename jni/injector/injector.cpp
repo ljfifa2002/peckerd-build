@@ -185,46 +185,93 @@ bool prepare_spawn_in_zygote(pid_t zygote_pid,
     void* remote_ainject = nullptr;
     long params[2] = {0, 0};
 
-    handle = inject_so_handle_by_pid(zygote_pid, ncore_path);
-    if (handle == nullptr) {
-        LOGE("prepare_spawn_in_zygote: inject ncore failed");
-        return false;
-    }
-
+    // ── Option-2: reuse existing ncore if already loaded ──────────────────────
+    // Probe zygote for an already-loaded ncore instance before injecting a new SO.
+    // If `ainject` is present in the global namespace (RTLD_DEFAULT), ncore was
+    // previously loaded and its fork/vfork hooks are still installed.  Re-using
+    // the existing instance avoids:
+    //   1. Accumulating memfd SO mappings in zygote's address space.
+    //   2. Repeated DobbyHook/DobbyDestroy cycles that corrupt zygote's code pages.
+    //
+    // Flow:
+    //   a) Attach → probe RTLD_DEFAULT for "ainject".
+    //   b) Found  → call ainject on the existing instance; skip SO injection.
+    //   c) Missing → detach, inject new libncore.so, re-attach, call ainject.
+    // ──────────────────────────────────────────────────────────────────────────
     if (!attach_process(zygote_pid)) {
-        LOGE("prepare_spawn_in_zygote: re-attach zygote failed");
+        LOGE("prepare_spawn_in_zygote: attach zygote failed");
         return false;
     }
     attached = true;
 
     remote_sym_name = remote_alloc_string(zygote_pid, "ainject");
-    remote_pkg = remote_alloc_string(zygote_pid, package_name);
-    remote_so = remote_alloc_string(zygote_pid, so_path);
-    if (remote_sym_name == nullptr || remote_pkg == nullptr || remote_so == nullptr) {
-        LOGE("prepare_spawn_in_zygote: remote string allocation failed");
-        goto fail;
-    }
-
-    // Prefer the already-loaded ncore instance (RTLD_DEFAULT) so that ainject()
-    // resets g_injection_done and clears the lock file in the instance that
-    // actually owns the fork/vfork hooks. Falling back to the newly-loaded handle
-    // only when ncore was not previously in the global namespace.
-    remote_ainject = call_remote_function<void*, void*, const char*>(
-        zygote_pid,
-        reinterpret_cast<void*>(dlsym),
-        static_cast<void*>(nullptr),  // RTLD_DEFAULT
-        reinterpret_cast<const char*>(remote_sym_name)
-    );
-    if (remote_ainject == nullptr) {
+    if (remote_sym_name != nullptr) {
         remote_ainject = call_remote_function<void*, void*, const char*>(
             zygote_pid,
             reinterpret_cast<void*>(dlsym),
-            handle,
+            static_cast<void*>(nullptr),  // RTLD_DEFAULT
             reinterpret_cast<const char*>(remote_sym_name)
         );
     }
-    if (remote_ainject == nullptr) {
-        LOGE("prepare_spawn_in_zygote: dlsym(ainject) failed");
+
+    if (remote_ainject != nullptr) {
+        // Existing ncore found — reuse it.
+        LOGI("prepare_spawn_in_zygote: ncore already in zygote, reusing instance");
+    } else {
+        // ncore not yet in zygote — inject a fresh SO.
+        if (remote_sym_name != nullptr) {
+            call_remote_function<void, void*>(zygote_pid,
+                reinterpret_cast<void*>(free), remote_sym_name);
+            remote_sym_name = nullptr;
+        }
+        if (!detach_process(zygote_pid)) {
+            LOGE("prepare_spawn_in_zygote: detach before inject failed");
+            return false;
+        }
+        attached = false;
+
+        handle = inject_so_handle_by_pid(zygote_pid, ncore_path);
+        if (handle == nullptr) {
+            LOGE("prepare_spawn_in_zygote: inject ncore failed");
+            return false;
+        }
+
+        if (!attach_process(zygote_pid)) {
+            LOGE("prepare_spawn_in_zygote: re-attach after inject failed");
+            return false;
+        }
+        attached = true;
+
+        remote_sym_name = remote_alloc_string(zygote_pid, "ainject");
+        if (remote_sym_name == nullptr) {
+            LOGE("prepare_spawn_in_zygote: alloc ainject name failed");
+            goto fail;
+        }
+        // Prefer existing instance (RTLD_DEFAULT); fall back to freshly-loaded handle.
+        remote_ainject = call_remote_function<void*, void*, const char*>(
+            zygote_pid,
+            reinterpret_cast<void*>(dlsym),
+            static_cast<void*>(nullptr),
+            reinterpret_cast<const char*>(remote_sym_name)
+        );
+        if (remote_ainject == nullptr) {
+            remote_ainject = call_remote_function<void*, void*, const char*>(
+                zygote_pid,
+                reinterpret_cast<void*>(dlsym),
+                handle,
+                reinterpret_cast<const char*>(remote_sym_name)
+            );
+        }
+        if (remote_ainject == nullptr) {
+            LOGE("prepare_spawn_in_zygote: dlsym(ainject) failed after fresh inject");
+            goto fail;
+        }
+    }
+
+    remote_pkg = remote_alloc_string(zygote_pid, package_name);
+    remote_so = remote_alloc_string(zygote_pid, so_path);
+    if (remote_pkg == nullptr || remote_so == nullptr) {
+        LOGE("prepare_spawn_in_zygote: remote string allocation failed");
         goto fail;
     }
 
