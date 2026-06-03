@@ -14,6 +14,8 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
+#define NINJECTOR_VERSION "2026.06.03-android15-memrw"
+
 #if defined(__aarch64__)
 #define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker64"
 #else
@@ -127,6 +129,7 @@ static void show_help(const char* name) {
 }
 
 int main(int argc, char* argv[]) {
+    LOGI("main: Ninjector version=%s", NINJECTOR_VERSION);
     if (argc < 2) {
         show_help(argv[0]);
         return 0;

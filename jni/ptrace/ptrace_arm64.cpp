@@ -82,8 +82,8 @@ static bool mem_rw(pid_t pid, long address, void* buf, size_t size, bool write) 
         return false;
     }
     ssize_t n = write
-        ? pwrite64(fd, buf, size, (off64_t)address)
-        : pread64(fd, buf, size, (off64_t)address);
+        ? pwrite64(fd, buf, size, (off64_t)((unsigned long long)address & 0x00FFFFFFFFFFFFFFULL))
+        : pread64(fd, buf, size, (off64_t)((unsigned long long)address & 0x00FFFFFFFFFFFFFFULL));
     close(fd);
     if (n != (ssize_t)size) {
         LOGE("mem_rw: %s pid=%d addr=0x%lx size=%zu got=%zd errno=%d (%s)",
