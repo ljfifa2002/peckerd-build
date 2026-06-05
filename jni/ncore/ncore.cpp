@@ -158,6 +158,17 @@ static void hooks_state_set(bool active) {
     }
 }
 
+static char* g_target_package = nullptr;
+static char* g_target_so = nullptr;
+static void* g_android_os_Process_setArg = nullptr;
+static void* g_selinux_android_setcontext = nullptr;
+static bool g_payload_loaded = false;
+static bool g_spawn_hooks_installed = false;
+// Set to true by the parent fork hook after the first injection target has been
+// dispatched. Inherited by subsequent children via fork copy-on-write, causing
+// them to skip hook installation entirely.  Reset only by aclear()/ainject().
+static bool g_injection_done = false;
+
 // Write current target (package + so_path) to NCORE_TARGET_FILE so that
 // fork hooks from any ncore instance (including stale ones) can read the
 // authoritative target at child-init time.
@@ -193,7 +204,7 @@ static void sync_target_from_file() {
     *nl = '\0';
     const char* pkg = buf;
     const char* so  = nl + 1;
-    char* nl2 = strchr(so, '\n');
+    char* nl2 = strchr(const_cast<char*>(so), '\n');
     if (nl2 != nullptr) *nl2 = '\0';
 
     if (pkg[0] == '\0' || so[0] == '\0') return;
@@ -212,17 +223,6 @@ static void sync_target_from_file() {
         LOGI("ncore: sync_target_from_file so=%s", g_target_so);
     }
 }
-
-static char* g_target_package = nullptr;
-static char* g_target_so = nullptr;
-static void* g_android_os_Process_setArg = nullptr;
-static void* g_selinux_android_setcontext = nullptr;
-static bool g_payload_loaded = false;
-static bool g_spawn_hooks_installed = false;
-// Set to true by the parent fork hook after the first injection target has been
-// dispatched. Inherited by subsequent children via fork copy-on-write, causing
-// them to skip hook installation entirely.  Reset only by aclear()/ainject().
-static bool g_injection_done = false;
 
 static void send_status_to_injector(const char* package_name, const char* so_path) {
     // Select result file by task type (not package name) so the device never
