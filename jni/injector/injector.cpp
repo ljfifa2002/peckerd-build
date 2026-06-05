@@ -16,6 +16,16 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 
+// ABI-specific path for the aclear address file written by ncore when it
+// installs fork hooks.  Used as a fallback when dlsym(RTLD_DEFAULT,"aclear")
+// returns null (32-bit Android 11 where memfd-loaded SO symbols are not
+// visible in the global namespace).
+#if defined(__aarch64__)
+#define NCORE_ACLEAR_ADDR_FILE "/data/local/tmp/pecker64/ncore_aclear_addr"
+#else
+#define NCORE_ACLEAR_ADDR_FILE "/data/local/tmp/pecker32/ncore_aclear_addr"
+#endif
+
 // Load a file into a local anonymous memfd and return the fd.
 // The caller should close the fd after the remote dlopen completes.
 // Returns -1 on failure.
@@ -378,10 +388,27 @@ bool clear_spawn_in_zygote(pid_t zygote_pid, const char* ncore_path) {
     remote_sym_name = nullptr;
 
     if (remote_aclear == nullptr) {
-        // ncore not loaded yet — nothing to clear.
-        LOGI("clear_spawn_in_zygote: aclear not found (ncore not loaded), nothing to clear");
-        detach_process(zygote_pid);
-        return true;
+        // Fallback: read aclear address from file written by ncore at hook-install
+        // time.  Needed on 32-bit Android 11 where memfd-loaded SO symbols are not
+        // visible via RTLD_DEFAULT even with RTLD_GLOBAL.
+        int afd = open(NCORE_ACLEAR_ADDR_FILE, O_RDONLY);
+        if (afd >= 0) {
+            char abuf[32] = {0};
+            if (read(afd, abuf, sizeof(abuf) - 1) > 0) {
+                unsigned long addr = strtoul(abuf, nullptr, 16);
+                if (addr != 0) {
+                    remote_aclear = reinterpret_cast<void*>((uintptr_t)addr);
+                    LOGI("clear_spawn_in_zygote: using aclear addr from file: %p", remote_aclear);
+                }
+            }
+            close(afd);
+        }
+        if (remote_aclear == nullptr) {
+            // ncore not loaded yet — nothing to clear.
+            LOGI("clear_spawn_in_zygote: aclear not found (ncore not loaded), nothing to clear");
+            detach_process(zygote_pid);
+            return true;
+        }
     }
 
     call_remote_call<void>(zygote_pid, reinterpret_cast<long>(remote_aclear), 0, nullptr);

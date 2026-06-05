@@ -96,6 +96,10 @@ static const char* result_file_for_pkg(const char* pkg) {
 // Shared target file: ainject writes package+so, install_child_hooks reads it
 // so that fork hooks from stale ncore instances still pick up the current target.
 #define NCORE_TARGET_FILE NINJECTOR_RESULT_DIR "/ncore_target"
+// aclear address file: written when this instance installs fork hooks so that
+// clear_spawn_in_zygote can find aclear on 32-bit Android 11 where RTLD_DEFAULT
+// does not expose memfd-loaded SO symbols.
+#define NCORE_ACLEAR_ADDR_FILE NINJECTOR_RESULT_DIR "/ncore_aclear_addr"
 
 // Build lock-file path for a package name.
 // Returns length written (not including null), or 0 on overflow.
@@ -168,6 +172,25 @@ static bool g_spawn_hooks_installed = false;
 // dispatched. Inherited by subsequent children via fork copy-on-write, causing
 // them to skip hook installation entirely.  Reset only by aclear()/ainject().
 static bool g_injection_done = false;
+
+// Forward declaration: aclear is defined later; needed by write_aclear_addr_file.
+extern "C" void aclear();
+
+// Write the virtual address of aclear() in this process to NCORE_ACLEAR_ADDR_FILE.
+// Called only when this ncore instance actually installs the fork hooks, so the
+// address always belongs to the instance that owns the live hooks.
+// clear_spawn_in_zygote reads this file as a fallback when dlsym(RTLD_DEFAULT)
+// cannot find aclear (e.g. 32-bit Android 11 with memfd-loaded SO).
+static void write_aclear_addr_file() {
+    int fd = open(NCORE_ACLEAR_ADDR_FILE, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    if (fd < 0) {
+        LOGE("ncore: write_aclear_addr_file open failed errno=%d", errno);
+        return;
+    }
+    dprintf(fd, "%lx\n", (unsigned long)(uintptr_t)aclear);
+    close(fd);
+    LOGD("ncore: aclear addr written %lx", (unsigned long)(uintptr_t)aclear);
+}
 
 // Write current target (package + so_path) to NCORE_TARGET_FILE so that
 // fork hooks from any ncore instance (including stale ones) can read the
@@ -318,6 +341,7 @@ extern "C" void aclear() {
     }
     unload_target_state();
     unlink(NCORE_TARGET_FILE);
+    unlink(NCORE_ACLEAR_ADDR_FILE);
 }
 
 static void preload_deps(const char* so_path) {
@@ -511,6 +535,7 @@ extern "C" void ainject(const char* package_name, const char* so_path) {
     INSTALL_HOOK(vfork, vfork);
     g_spawn_hooks_installed = true;
     hooks_state_set(true);
+    write_aclear_addr_file();
     LOGI("ncore: spawn hooks installed");
 }
 
