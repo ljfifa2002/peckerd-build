@@ -498,19 +498,13 @@ extern "C" void ainject(const char* package_name, const char* so_path) {
     // (including stale ones with old g_target_package) reads the current target.
     write_target_file();
 
-    if (g_spawn_hooks_installed) {
-        // This instance already installed hooks — just updated the target, reuse.
-        LOGI("ncore: spawn hooks already installed by this instance, reusing (injection_done reset)");
+    if (g_spawn_hooks_installed || hooks_state_active()) {
+        // Hooks already installed by this or a previous ncore instance.
+        // g_injection_done was reset above so the next fork will load payload fresh.
+        // The target file written above ensures child processes from stale instances
+        // will read the correct current target via sync_target_from_file().
+        LOGI("ncore: spawn hooks already installed, reusing (injection_done reset)");
         return;
-    }
-
-    // This instance has not installed hooks yet.  If another (stale) ncore instance
-    // installed them earlier, take ownership: unhook the old ones first to avoid
-    // double-hooking, then install fresh hooks for this instance.
-    if (hooks_state_active()) {
-        LOGI("ncore: stale hooks from previous instance detected, replacing");
-        unhook_all();
-        hooks_state_set(false);
     }
 
     INSTALL_HOOK(fork, fork);
