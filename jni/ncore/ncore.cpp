@@ -93,6 +93,9 @@ static const char* result_file_for_pkg(const char* pkg) {
 // via memfd (each memfd gets a unique inode, making the linker treat them as
 // separate libraries with independent globals and Dobby state).
 #define NINJECTOR_HOOKS_PREFIX "/data/local/tmp/ncore_hooks_"
+// Shared target file: ainject writes package+so, install_child_hooks reads it
+// so that fork hooks from stale ncore instances still pick up the current target.
+#define NCORE_TARGET_FILE NINJECTOR_RESULT_DIR "/ncore_target"
 
 // Build lock-file path for a package name.
 // Returns length written (not including null), or 0 on overflow.
@@ -152,6 +155,61 @@ static void hooks_state_set(bool active) {
         if (fd >= 0) close(fd);
     } else {
         unlink(path);
+    }
+}
+
+// Write current target (package + so_path) to NCORE_TARGET_FILE so that
+// fork hooks from any ncore instance (including stale ones) can read the
+// authoritative target at child-init time.
+static void write_target_file() {
+    if (g_target_package == nullptr || g_target_so == nullptr) return;
+    int fd = open(NCORE_TARGET_FILE, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    if (fd < 0) {
+        LOGE("ncore: write_target_file open failed errno=%d", errno);
+        return;
+    }
+    // Format: "<package>\n<so_path>\n"
+    dprintf(fd, "%s\n%s\n", g_target_package, g_target_so);
+    close(fd);
+    LOGD("ncore: target file written pkg=%s", g_target_package);
+}
+
+// Read target file and update g_target_package / g_target_so if the file
+// contains different (newer) values.  Called at the top of install_child_hooks
+// so that even a stale ncore instance picks up the target set by ainject on
+// the current (newer) instance.
+static void sync_target_from_file() {
+    int fd = open(NCORE_TARGET_FILE, O_RDONLY);
+    if (fd < 0) return;  // file absent — keep existing globals
+
+    char buf[512] = {0};
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return;
+
+    // Parse "<package>\n<so_path>\n"
+    char* nl = strchr(buf, '\n');
+    if (nl == nullptr) return;
+    *nl = '\0';
+    const char* pkg = buf;
+    const char* so  = nl + 1;
+    char* nl2 = strchr(so, '\n');
+    if (nl2 != nullptr) *nl2 = '\0';
+
+    if (pkg[0] == '\0' || so[0] == '\0') return;
+
+    // Only update if different from current globals to avoid redundant strdup.
+    bool pkg_changed = (g_target_package == nullptr || strcmp(g_target_package, pkg) != 0);
+    bool so_changed  = (g_target_so      == nullptr || strcmp(g_target_so,      so)  != 0);
+    if (pkg_changed) {
+        if (g_target_package != nullptr) free(g_target_package);
+        g_target_package = strdup(pkg);
+        LOGI("ncore: sync_target_from_file pkg=%s", g_target_package);
+    }
+    if (so_changed) {
+        if (g_target_so != nullptr) free(g_target_so);
+        g_target_so = strdup(so);
+        LOGI("ncore: sync_target_from_file so=%s", g_target_so);
     }
 }
 
@@ -259,6 +317,7 @@ extern "C" void aclear() {
         clear_injected(g_target_package);
     }
     unload_target_state();
+    unlink(NCORE_TARGET_FILE);
 }
 
 static void preload_deps(const char* so_path) {
@@ -350,6 +409,9 @@ DECLARE_HOOK(android_os_Process_setArgV0, void, JNIEnv* env, jobject obj, jstrin
 }
 
 static void install_child_hooks() {
+    // Refresh target from the shared file so that even a stale ncore instance
+    // (whose g_target_package was set by a previous task) uses the current target.
+    sync_target_from_file();
     LOGI("ncore: installing child hooks pid=%d", getpid());
 
     g_android_os_Process_setArg = DobbySymbolResolver(
@@ -432,11 +494,23 @@ extern "C" void ainject(const char* package_name, const char* so_path) {
          g_target_package != nullptr ? g_target_package : "(null)",
          g_target_so != nullptr ? g_target_so : "(null)");
 
-    if (g_spawn_hooks_installed || hooks_state_active()) {
-        // Hooks already installed by this or a previous ncore instance.
-        // g_injection_done was reset above so the next fork will load payload fresh.
-        LOGI("ncore: spawn hooks already installed, reusing (injection_done reset)");
+    // Persist target to disk so install_child_hooks() on any ncore instance
+    // (including stale ones with old g_target_package) reads the current target.
+    write_target_file();
+
+    if (g_spawn_hooks_installed) {
+        // This instance already installed hooks — just updated the target, reuse.
+        LOGI("ncore: spawn hooks already installed by this instance, reusing (injection_done reset)");
         return;
+    }
+
+    // This instance has not installed hooks yet.  If another (stale) ncore instance
+    // installed them earlier, take ownership: unhook the old ones first to avoid
+    // double-hooking, then install fresh hooks for this instance.
+    if (hooks_state_active()) {
+        LOGI("ncore: stale hooks from previous instance detected, replacing");
+        unhook_all();
+        hooks_state_set(false);
     }
 
     INSTALL_HOOK(fork, fork);
