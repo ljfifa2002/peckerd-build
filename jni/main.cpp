@@ -14,7 +14,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#define NINJECTOR_VERSION "2026.06.03-android15-memrw"
+#define NINJECTOR_VERSION "V1.0.0-20260605"
 
 #if defined(__aarch64__)
 #define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker64"
