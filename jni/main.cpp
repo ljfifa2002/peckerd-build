@@ -14,7 +14,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#define NINJECTOR_VERSION "V1.0.0-20260605"
+// Bumped automatically by CI when a v* tag is pushed (see .github/workflows/build.yml).
+// Format: v1.0.<build_number>
+#define NINJECTOR_VERSION "V1.0.0"
 
 #if defined(__aarch64__)
 #define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker64"
