@@ -10,12 +10,12 @@ exit /b
 $ErrorActionPreference = 'Stop'
 
 # 检查 master 是否领先 origin/master（有未推送提交）
-$ahead = git rev-list --count "origin/master..HEAD" 2>$null
+$ahead = git rev-list --count "origin/main..HEAD" 2>$null
 if ($ahead -gt 0) {
-    Write-Host "WARNING: $ahead unpushed commit(s) on master. Pushing master first..."
-    git push origin master
-    if ($LASTEXITCODE -ne 0) { Write-Error "git push master failed"; exit 1 }
-    Write-Host "master pushed."
+    Write-Host "WARNING: $ahead unpushed commit(s) on main. Pushing main first..."
+    git push origin main
+    if ($LASTEXITCODE -ne 0) { Write-Error "git push main failed"; exit 1 }
+    Write-Host "main pushed."
     Write-Host ""
 }
 
@@ -31,9 +31,9 @@ if ($status) {
         git add -A
         git commit -m $msg
         if ($LASTEXITCODE -ne 0) { Write-Error "git commit failed"; exit 1 }
-        git push origin master
-        if ($LASTEXITCODE -ne 0) { Write-Error "git push master failed"; exit 1 }
-        Write-Host "master pushed."
+        git push origin main
+        if ($LASTEXITCODE -ne 0) { Write-Error "git push main failed"; exit 1 }
+        Write-Host "main pushed."
         Write-Host ""
     } else {
         Write-Host "Proceeding without committing (tag will point to current HEAD)."
