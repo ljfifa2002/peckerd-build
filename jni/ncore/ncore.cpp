@@ -363,6 +363,15 @@ static void preload_deps(const char* so_path) {
 }
 
 static bool load_payload_if_needed(const char* package_name) {
+    // Re-read the authoritative target at specialization time, not just at fork
+    // time. sync_target_from_file() also runs in install_child_hooks(), but a
+    // pre-forked blank (ColorOS USAP slot) is forked under whatever target was
+    // current then, and may only be specialized into an app many seconds later
+    // under a newer task's target. Without refreshing here, such a blank compares
+    // against a stale g_target_package, never matches the app it becomes, and
+    // injects nothing -> the spawn callback times out (~20s) and pecker retries.
+    sync_target_from_file();
+
     if (!matches_target(package_name)) {
         return false;
     }
