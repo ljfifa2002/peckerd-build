@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -137,6 +138,62 @@ std::vector<pid_t> get_zygote_pids(bool want64) {
         LOGE("get_zygote_pids: no %d-bit zygote found", want64 ? 64 : 32);
     }
     return result;
+}
+
+int kill_usap_processes(bool want64) {
+    // ColorOS keeps the USAP pool alive even after usap_pool_enabled=false, and the
+    // blanks pre-forked at boot (before ncore was injected into the zygote) carry NO
+    // ncore hooks.  If the target app is specialised from such a blank it escapes
+    // ncore entirely -> the spawn callback times out (~20s) and the task retries.
+    // Draining the pool right before `am start` forces the app to either cold-fork
+    // from the (now hooked) zygote or grab a freshly re-forked, hooked blank.  One
+    // pass suffices: any blank re-forked afterwards comes from the hooked zygote and
+    // installs child hooks before it is offered to the pool.  A blank that has
+    // already specialised no longer has cmdline "usap64"/"usap32", so matching the
+    // exact cmdline only ever hits still-blank slots.
+    const char* want_name = want64 ? "usap64" : "usap32";
+    int killed = 0;
+
+    DIR* dir = opendir("/proc");
+    if (dir == nullptr) {
+        LOGE("kill_usap_processes: failed to open /proc");
+        return 0;
+    }
+
+    struct dirent* entry = nullptr;
+    while ((entry = readdir(dir)) != nullptr) {
+        int pid = atoi(entry->d_name);
+        if (pid <= 0) {
+            continue;
+        }
+
+        char path[256] = {0};
+        snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+        FILE* fp = fopen(path, "r");
+        if (fp == nullptr) {
+            continue;
+        }
+        char cmdline[256] = {0};
+        char* got = fgets(cmdline, sizeof(cmdline), fp);
+        fclose(fp);
+        if (got == nullptr) {
+            continue;
+        }
+
+        // cmdline is NUL-separated; a blank slot's whole cmdline is just the name.
+        if (strcmp(cmdline, want_name) != 0) {
+            continue;
+        }
+
+        if (kill(pid, SIGKILL) == 0) {
+            killed++;
+            LOGI("kill_usap_processes: killed %s pid=%d", want_name, pid);
+        }
+    }
+
+    closedir(dir);
+    LOGI("kill_usap_processes: drained %d %s blank(s)", killed, want_name);
+    return killed;
 }
 
 long get_module_base(pid_t pid, const char* module_name) {

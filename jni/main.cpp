@@ -88,6 +88,16 @@ static bool start_target_app(const char* package_name) {
     int force_stop_ret = system(force_stop_cmd.c_str());
     LOGI("start_target_app: force-stop ret=%d", force_stop_ret);
 
+    // Drain the USAP pool so the app cannot be specialised from a blank that was
+    // pre-forked before ncore was injected (and therefore has no hooks).  Without
+    // this, ColorOS serves the first launch from a stale boot-time blank that
+    // escapes ncore -> spawn-callback timeout.  No-op on devices without USAP.
+#if defined(__aarch64__)
+    kill_usap_processes(true);
+#else
+    kill_usap_processes(false);
+#endif
+
     LOGI("start_target_app: start package=%s", package_name);
     int start_ret = system(start_cmd.c_str());
     LOGI("start_target_app: start ret=%d", start_ret);
