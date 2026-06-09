@@ -2,9 +2,11 @@
 #include "../common/log.h"
 
 #include <dirent.h>
+#include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 int get_pid(const char* process_name) {
     if (process_name == nullptr || process_name[0] == '\0') {
@@ -54,6 +56,70 @@ int get_pid(const char* process_name) {
     closedir(dir);
     LOGE("get_pid: process not found: %s", process_name);
     return -1;
+}
+
+std::vector<pid_t> get_zygote_pids(bool want64) {
+    std::vector<pid_t> result;
+
+    DIR* dir = opendir("/proc");
+    if (dir == nullptr) {
+        LOGE("get_zygote_pids: failed to open /proc");
+        return result;
+    }
+
+    struct dirent* entry = nullptr;
+    while ((entry = readdir(dir)) != nullptr) {
+        int pid = atoi(entry->d_name);
+        if (pid <= 0) {
+            continue;
+        }
+
+        // argv[0] — zygote sets it to "zygote"/"zygote64" via setArgV0.  The OPPO
+        // fast-start zygote is a separate process whose cmdline is just "zygote",
+        // so we accept both names and disambiguate the 32- vs 64-bit ones by ABI.
+        char path[256] = {0};
+        snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+        FILE* fp = fopen(path, "r");
+        if (fp == nullptr) {
+            continue;
+        }
+        char cmdline[256] = {0};
+        if (fgets(cmdline, sizeof(cmdline), fp) == nullptr) {
+            fclose(fp);
+            continue;
+        }
+        fclose(fp);
+
+        char* name = strrchr(cmdline, '/');
+        name = (name == nullptr) ? cmdline : name + 1;
+        if (strcmp(name, "zygote") != 0 && strcmp(name, "zygote64") != 0) {
+            continue;  // excludes webview_zygote / app_zygote / everything else
+        }
+
+        // ABI filter: /proc/<pid>/exe -> .../app_process64 or .../app_process32.
+        // The arm64 build must only inject the arm64 ncore into 64-bit zygotes.
+        char exe_path[256] = {0};
+        snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
+        char exe_target[256] = {0};
+        ssize_t n = readlink(exe_path, exe_target, sizeof(exe_target) - 1);
+        if (n <= 0) {
+            continue;
+        }
+        exe_target[n] = '\0';
+        bool is64 = (strstr(exe_target, "app_process64") != nullptr);
+        if (is64 != want64) {
+            continue;
+        }
+
+        result.push_back(pid);
+        LOGI("get_zygote_pids: matched name=%s pid=%d exe=%s", name, pid, exe_target);
+    }
+
+    closedir(dir);
+    if (result.empty()) {
+        LOGE("get_zygote_pids: no %d-bit zygote found", want64 ? 64 : 32);
+    }
+    return result;
 }
 
 long get_module_base(pid_t pid, const char* module_name) {

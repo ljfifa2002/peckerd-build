@@ -165,12 +165,12 @@ int main(int argc, char* argv[]) {
 
     if (clear_mode) {
 #if defined(__aarch64__)
-        pid_t zygote_pid = get_pid("zygote64");
+        std::vector<pid_t> zygote_pids = get_zygote_pids(true);
 #else
-        pid_t zygote_pid = get_pid("zygote");
+        std::vector<pid_t> zygote_pids = get_zygote_pids(false);
 #endif
-        if (zygote_pid <= 0) {
-            LOGE("main: zygote64 not found");
+        if (zygote_pids.empty()) {
+            LOGE("main: no zygote found");
             return -1;
         }
         char cwd[PATH_MAX] = {0};
@@ -179,10 +179,12 @@ int main(int argc, char* argv[]) {
             return -1;
         }
         std::string ncore_path = std::string(cwd) + "/libncore.so";
-        LOGI("main: clear zygote=%d ncore=%s", zygote_pid, ncore_path.c_str());
-        if (!clear_spawn_in_zygote(zygote_pid, ncore_path.c_str())) {
-            LOGE("main: clear failed");
-            return -1;
+        // Clear every discovered zygote (best-effort; a stale one shouldn't block the rest).
+        for (pid_t zpid : zygote_pids) {
+            LOGI("main: clear zygote=%d ncore=%s", zpid, ncore_path.c_str());
+            if (!clear_spawn_in_zygote(zpid, ncore_path.c_str())) {
+                LOGE("main: clear failed for zygote=%d", zpid);
+            }
         }
         LOGI("main: clear ok");
         return 0;
@@ -202,12 +204,12 @@ int main(int argc, char* argv[]) {
         }
 
 #if defined(__aarch64__)
-        pid = get_pid("zygote64");
+        std::vector<pid_t> zygote_pids = get_zygote_pids(true);
 #else
-        pid = get_pid("zygote");
+        std::vector<pid_t> zygote_pids = get_zygote_pids(false);
 #endif
-        if (pid <= 0) {
-            LOGE("main: zygote64 not found");
+        if (zygote_pids.empty()) {
+            LOGE("main: no zygote found");
             return -1;
         }
 
@@ -216,17 +218,28 @@ int main(int argc, char* argv[]) {
             LOGE("main: getcwd failed");
             return -1;
         }
-
         std::string ncore_path = std::string(cwd) + "/libncore.so";
-        LOGI("main: spawn mode zygote=%d package=%s so=%s ncore=%s",
-             pid, package_name, so_path, ncore_path.c_str());
 
-        if (!prepare_spawn_in_zygote(pid, ncore_path.c_str(), package_name, so_path)) {
-            LOGE("main: spawn prepare failed");
+        // Hook EVERY discovered zygote (primary zygote64 + the OPPO fast-start
+        // "zygote"), so the target app is caught no matter which one forks it.
+        // Without this, an app cold-started from the fast-start zygote escapes the
+        // zygote64-only hook -> spawn callback timeout -> inject failure.
+        int prepared = 0;
+        for (pid_t zpid : zygote_pids) {
+            LOGI("main: spawn mode zygote=%d package=%s so=%s ncore=%s",
+                 zpid, package_name, so_path, ncore_path.c_str());
+            if (prepare_spawn_in_zygote(zpid, ncore_path.c_str(), package_name, so_path)) {
+                prepared++;
+            } else {
+                LOGE("main: spawn prepare failed for zygote=%d", zpid);
+            }
+        }
+        if (prepared == 0) {
+            LOGE("main: spawn prepare failed for all zygotes");
             return -1;
         }
 
-        LOGI("main: spawn prepare success");
+        LOGI("main: spawn prepare success (%d zygote(s))", prepared);
 
         std::promise<int> promise_obj;
         std::future<int> future = promise_obj.get_future();
