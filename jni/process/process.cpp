@@ -3,6 +3,7 @@
 
 #include <dirent.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -96,23 +97,39 @@ std::vector<pid_t> get_zygote_pids(bool want64) {
             continue;  // excludes webview_zygote / app_zygote / everything else
         }
 
-        // ABI filter: /proc/<pid>/exe -> .../app_process64 or .../app_process32.
-        // The arm64 build must only inject the arm64 ncore into 64-bit zygotes.
-        char exe_path[256] = {0};
+        // ABI filter via the ELF class of /proc/<pid>/exe.  We can't match on the
+        // binary name: the OPPO fast-start zygote runs /system_ext/bin/hbt_translator
+        // (cmdline "zygote", 64-bit) — NOT app_process64 — so name-matching the exe
+        // would miss it.  Read the ELF header's EI_CLASS byte instead (1 = 32-bit,
+        // 2 = 64-bit).  The arm64 build must only inject the arm64 ncore into 64-bit
+        // zygotes (zygote64 + the 64-bit fast-start "zygote").
+        char exe_path[64] = {0};
         snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
+
         char exe_target[256] = {0};
-        ssize_t n = readlink(exe_path, exe_target, sizeof(exe_target) - 1);
-        if (n <= 0) {
+        ssize_t ln = readlink(exe_path, exe_target, sizeof(exe_target) - 1);
+        if (ln > 0) {
+            exe_target[ln] = '\0';
+        }
+
+        int efd = open(exe_path, O_RDONLY | O_CLOEXEC);
+        if (efd < 0) {
             continue;
         }
-        exe_target[n] = '\0';
-        bool is64 = (strstr(exe_target, "app_process64") != nullptr);
+        unsigned char ehdr[5] = {0};
+        ssize_t rd = read(efd, ehdr, sizeof(ehdr));
+        close(efd);
+        if (rd < 5 || ehdr[0] != 0x7f || ehdr[1] != 'E' || ehdr[2] != 'L' || ehdr[3] != 'F') {
+            continue;
+        }
+        bool is64 = (ehdr[4] == 2);  // ELFCLASS64
         if (is64 != want64) {
             continue;
         }
 
         result.push_back(pid);
-        LOGI("get_zygote_pids: matched name=%s pid=%d exe=%s", name, pid, exe_target);
+        LOGI("get_zygote_pids: matched name=%s pid=%d exe=%s class=%d-bit",
+             name, pid, exe_target, is64 ? 64 : 32);
     }
 
     closedir(dir);
