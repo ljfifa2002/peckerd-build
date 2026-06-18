@@ -1,5 +1,5 @@
-#ifndef NINJECTOR_SYMBI_STUB_H
-#define NINJECTOR_SYMBI_STUB_H
+#ifndef PECKERD_SYMBI_STUB_H
+#define PECKERD_SYMBI_STUB_H
 
 #include "stub_src/stub.h"
 #if defined(__aarch64__)
@@ -8,4 +8,4 @@
 #include "stub_src/generated_stub_arm.h"
 #endif
 
-#endif // NINJECTOR_SYMBI_STUB_H
+#endif // PECKERD_SYMBI_STUB_H

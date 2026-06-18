@@ -85,4 +85,4 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
-Write-Host "Done. CI will build Ninjector with NINJECTOR_VERSION=$nextTag"
+Write-Host "Done. CI will build peckerd with PECKERD_VERSION=$nextTag"

@@ -1,5 +1,5 @@
-#ifndef NINJECTOR_NCORE_NCORE_H
-#define NINJECTOR_NCORE_NCORE_H
+#ifndef PECKERD_NCORE_NCORE_H
+#define PECKERD_NCORE_NCORE_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -11,4 +11,4 @@ void ainject(const char* package_name, const char* so_path);
 }
 #endif
 
-#endif // NINJECTOR_NCORE_NCORE_H
+#endif // PECKERD_NCORE_NCORE_H

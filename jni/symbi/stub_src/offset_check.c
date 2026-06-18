@@ -1,6 +1,6 @@
 #include <stddef.h>
 #include <stdio.h>
-#include "E:/Learn/my_program/all_my_hook/kanxue/Ninjector/jni/symbi/stub_src/stub.h"
+#include "E:/Learn/my_program/all_my_hook/kanxue/peckerd/jni/symbi/stub_src/stub.h"
 int main() {
   printf("sizeof(TStub)=%zu\n", sizeof(TStub));
   printf("mark=%zu\n", offsetof(TStub, mark));

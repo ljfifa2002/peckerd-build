@@ -1,5 +1,5 @@
-#ifndef NINJECTOR_SYMBI_STUB_SRC_H
-#define NINJECTOR_SYMBI_STUB_SRC_H
+#ifndef PECKERD_SYMBI_STUB_SRC_H
+#define PECKERD_SYMBI_STUB_SRC_H
 
 #include <jni.h>
 #include <android/log.h>
@@ -35,4 +35,4 @@ typedef struct _TStub TStub;
 #define STUB_LOGI(stub, ...) if ((stub)->log_print) (stub)->log_print(ANDROID_LOG_INFO, STUB_LOG_TAG, __VA_ARGS__)
 #define STUB_LOGE(stub, ...) if ((stub)->log_print) (stub)->log_print(ANDROID_LOG_ERROR, STUB_LOG_TAG, __VA_ARGS__)
 
-#endif // NINJECTOR_SYMBI_STUB_SRC_H
+#endif // PECKERD_SYMBI_STUB_SRC_H

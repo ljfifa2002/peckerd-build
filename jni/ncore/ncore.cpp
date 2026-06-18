@@ -66,45 +66,45 @@ static void* memfd_load(const char* path, int dlopen_flags) {
 }
 
 #if defined(__aarch64__)
-#define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker64"
+#define PECKERD_RESULT_DIR "/data/local/tmp/pecker64"
 #else
-#define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker32"
+#define PECKERD_RESULT_DIR "/data/local/tmp/pecker32"
 #endif
 // Two fixed result files — one per task type.  Named by task type rather than
 // package name so the device never accumulates per-package files.
 // Determined by target package prefix: com.tencent.mm → applet, else → APK.
-#define NINJECTOR_RESULT_APK       NINJECTOR_RESULT_DIR "/ninjector_apk_result.json"
-#define NINJECTOR_RESULT_APPLET_WX NINJECTOR_RESULT_DIR "/ninjector_applet_wx_result.json"
+#define PECKERD_RESULT_APK       PECKERD_RESULT_DIR "/peckerd_apk_result.json"
+#define PECKERD_RESULT_APPLET_WX PECKERD_RESULT_DIR "/peckerd_applet_wx_result.json"
 
 static const char* result_file_for_pkg(const char* pkg) {
     if (pkg != nullptr && strncmp(pkg, "com.tencent.mm", 14) == 0) {
-        return NINJECTOR_RESULT_APPLET_WX;
+        return PECKERD_RESULT_APPLET_WX;
     }
-    return NINJECTOR_RESULT_APK;
+    return PECKERD_RESULT_APK;
 }
 
 // v2 prefix removed: the detection device always runs the latest ncore build,
 // so version-based lock-file conflicts cannot occur in practice.
 // The plain prefix is kept consistent with historical lock files on device.
-#define NINJECTOR_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
+#define PECKERD_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
 // Per-zygote-PID file that marks fork/vfork hooks as installed.
 // Keyed by PID so a zygote restart (new PID) gets a clean slate.
 // Guards against double-hooking when multiple ncore SO instances are loaded
 // via memfd (each memfd gets a unique inode, making the linker treat them as
 // separate libraries with independent globals and Dobby state).
-#define NINJECTOR_HOOKS_PREFIX "/data/local/tmp/ncore_hooks_"
+#define PECKERD_HOOKS_PREFIX "/data/local/tmp/ncore_hooks_"
 // Shared target file: ainject writes package+so, install_child_hooks reads it
 // so that fork hooks from stale ncore instances still pick up the current target.
-#define NCORE_TARGET_FILE NINJECTOR_RESULT_DIR "/ncore_target"
+#define NCORE_TARGET_FILE PECKERD_RESULT_DIR "/ncore_target"
 // aclear address file: written when this instance installs fork hooks so that
 // clear_spawn_in_zygote can find aclear on 32-bit Android 11 where RTLD_DEFAULT
 // does not expose memfd-loaded SO symbols.
-#define NCORE_ACLEAR_ADDR_FILE NINJECTOR_RESULT_DIR "/ncore_aclear_addr"
+#define NCORE_ACLEAR_ADDR_FILE PECKERD_RESULT_DIR "/ncore_aclear_addr"
 
 // Build lock-file path for a package name.
 // Returns length written (not including null), or 0 on overflow.
 static size_t lock_path(char* buf, size_t buf_size, const char* pkg) {
-    size_t n = snprintf(buf, buf_size, "%s%s", NINJECTOR_LOCK_PREFIX, pkg);
+    size_t n = snprintf(buf, buf_size, "%s%s", PECKERD_LOCK_PREFIX, pkg);
     return (n < buf_size) ? n : 0;
 }
 
@@ -141,7 +141,7 @@ static void clear_injected(const char* pkg) {
 // Use getpid() (= zygote PID) so a zygote restart automatically invalidates
 // the previous state without any explicit cleanup.
 static void hooks_state_path(char* buf, size_t buf_size) {
-    snprintf(buf, buf_size, "%s%d", NINJECTOR_HOOKS_PREFIX, getpid());
+    snprintf(buf, buf_size, "%s%d", PECKERD_HOOKS_PREFIX, getpid());
 }
 
 static bool hooks_state_active() {
@@ -507,7 +507,7 @@ extern "C" void ainject(const char* package_name, const char* so_path) {
     // Always reset injection state when a new task starts: clear the per-package
     // lock file and reset g_injection_done so the next fork triggers a fresh
     // payload load. The same_package check that preserved g_injection_done was
-    // removed because each external Ninjector invocation is a new task and needs
+    // removed because each external peckerd invocation is a new task and needs
     // a clean slate regardless of whether the package name changed.
     if (g_target_package != nullptr) {
         clear_injected(g_target_package);

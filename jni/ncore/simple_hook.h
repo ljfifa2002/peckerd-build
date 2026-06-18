@@ -1,5 +1,5 @@
-#ifndef NINJECTOR_NCORE_SIMPLE_HOOK_H
-#define NINJECTOR_NCORE_SIMPLE_HOOK_H
+#ifndef PECKERD_NCORE_SIMPLE_HOOK_H
+#define PECKERD_NCORE_SIMPLE_HOOK_H
 
 #include "../common/log.h"
 #include "../../../TInjector-main/jni/core/dobby/dobby.h"
@@ -20,4 +20,4 @@
         } \
     } while (0)
 
-#endif // NINJECTOR_NCORE_SIMPLE_HOOK_H
+#endif // PECKERD_NCORE_SIMPLE_HOOK_H

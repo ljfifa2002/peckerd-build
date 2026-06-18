@@ -16,22 +16,22 @@
 
 // Bumped automatically by CI when a v* tag is pushed (see .github/workflows/build.yml).
 // Format: v1.0.<build_number>
-#define NINJECTOR_VERSION "v1.0.0"
+#define PECKERD_VERSION "v1.0.0"
 
 #if defined(__aarch64__)
-#define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker64"
+#define PECKERD_RESULT_DIR "/data/local/tmp/pecker64"
 #else
-#define NINJECTOR_RESULT_DIR "/data/local/tmp/pecker32"
+#define PECKERD_RESULT_DIR "/data/local/tmp/pecker32"
 #endif
 // Two fixed result files — one per task type, matching ncore.cpp.
-#define NINJECTOR_RESULT_APK       NINJECTOR_RESULT_DIR "/ninjector_apk_result.json"
-#define NINJECTOR_RESULT_APPLET_WX NINJECTOR_RESULT_DIR "/ninjector_applet_wx_result.json"
+#define PECKERD_RESULT_APK       PECKERD_RESULT_DIR "/peckerd_apk_result.json"
+#define PECKERD_RESULT_APPLET_WX PECKERD_RESULT_DIR "/peckerd_applet_wx_result.json"
 
 static const char* result_file_for_pkg(const char* pkg) {
     if (pkg != nullptr && strncmp(pkg, "com.tencent.mm", 14) == 0) {
-        return NINJECTOR_RESULT_APPLET_WX;
+        return PECKERD_RESULT_APPLET_WX;
     }
-    return NINJECTOR_RESULT_APK;
+    return PECKERD_RESULT_APK;
 }
 
 static void wait_for_spawn_callback(std::promise<int>& promise_obj,
@@ -141,7 +141,7 @@ static void show_help(const char* name) {
 }
 
 int main(int argc, char* argv[]) {
-    LOGI("main: Ninjector version=%s", NINJECTOR_VERSION);
+    LOGI("main: peckerd version=%s", PECKERD_VERSION);
     if (argc < 2) {
         show_help(argv[0]);
         return 0;

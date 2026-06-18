@@ -1,4 +1,4 @@
-name: Build Ninjector
+name: Build peckerd
 
 on:
   push:
@@ -22,10 +22,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           VERSION="${{ github.ref_name }}"
-          sed -i "s|#define NINJECTOR_VERSION \".*\"|#define NINJECTOR_VERSION \"${VERSION}\"|" \
+          sed -i "s|#define PECKERD_VERSION \".*\"|#define PECKERD_VERSION \"${VERSION}\"|" \
             jni/main.cpp
-          echo "Ninjector: NINJECTOR_VERSION set to ${VERSION}"
-          grep "NINJECTOR_VERSION" jni/main.cpp
+          echo "peckerd: PECKERD_VERSION set to ${VERSION}"
+          grep "PECKERD_VERSION" jni/main.cpp
 
       - name: Clone TInjector (provides libdobby.a)
         # Android.mk path: ../../TInjector-main/jni/core/<ABI>/libdobby.a
@@ -115,12 +115,12 @@ jobs:
                           zf.writestr(info, f.read())
                       print(f"  + {arcname}")
 
-          pack('/tmp/Ninjector-arm64-v8a.zip', [
-              ('Ninjector',   'libs/arm64-v8a/Ninjector'),
+          pack('/tmp/peckerd-arm64-v8a.zip', [
+              ('peckerd',   'libs/arm64-v8a/peckerd'),
               ('libncore.so', 'libs/arm64-v8a/libncore.so'),
           ])
-          pack('/tmp/Ninjector-armeabi-v7a.zip', [
-              ('Ninjector',   'libs/armeabi-v7a/Ninjector'),
+          pack('/tmp/peckerd-armeabi-v7a.zip', [
+              ('peckerd',   'libs/armeabi-v7a/peckerd'),
               ('libncore.so', 'libs/armeabi-v7a/libncore.so'),
           ])
           PYEOF
@@ -128,15 +128,15 @@ jobs:
       - name: Upload arm64-v8a artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Ninjector-arm64-v8a
-          path: /tmp/Ninjector-arm64-v8a.zip
+          name: peckerd-arm64-v8a
+          path: /tmp/peckerd-arm64-v8a.zip
           if-no-files-found: error
 
       - name: Upload armeabi-v7a artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Ninjector-armeabi-v7a
-          path: /tmp/Ninjector-armeabi-v7a.zip
+          name: peckerd-armeabi-v7a
+          path: /tmp/peckerd-armeabi-v7a.zip
           if-no-files-found: error
 
       - name: Create GitHub Release
@@ -144,12 +144,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            /tmp/Ninjector-arm64-v8a.zip
-            /tmp/Ninjector-armeabi-v7a.zip
-          name: Ninjector ${{ github.ref_name }}
+            /tmp/peckerd-arm64-v8a.zip
+            /tmp/peckerd-armeabi-v7a.zip
+          name: peckerd ${{ github.ref_name }}
           body: |
-            Ninjector + libncore.so build for pecker-agent ninjector mode.
+            peckerd + libncore.so build for pecker-agent peckerd mode.
 
             ## Files
-            - `Ninjector-arm64-v8a.zip` — Ninjector + libncore.so (arm64)
-            - `Ninjector-armeabi-v7a.zip` — Ninjector + libncore.so (arm32)
+            - `peckerd-arm64-v8a.zip` — peckerd + libncore.so (arm64)
+            - `peckerd-armeabi-v7a.zip` — peckerd + libncore.so (arm32)

@@ -1,5 +1,5 @@
-#ifndef NINJECTOR_SYMBI_INJECTOR_H
-#define NINJECTOR_SYMBI_INJECTOR_H
+#ifndef PECKERD_SYMBI_INJECTOR_H
+#define PECKERD_SYMBI_INJECTOR_H
 
 #include <sys/types.h>
 #include <vector>
@@ -11,4 +11,4 @@ bool inject_spawn_symbi_by_pids(const std::vector<pid_t>& pids,
                                 const char* package_name,
                                 const char* so_path);
 
-#endif // NINJECTOR_SYMBI_INJECTOR_H
+#endif // PECKERD_SYMBI_INJECTOR_H

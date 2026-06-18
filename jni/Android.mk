@@ -2,7 +2,7 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := Ninjector
+LOCAL_MODULE := peckerd
 
 # Select architecture-specific ptrace implementation
 ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
