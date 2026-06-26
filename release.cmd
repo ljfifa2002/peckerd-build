@@ -83,4 +83,4 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Done. CI will build peckerd with PECKERD_VERSION=$nextTag"
 Write-Host "(peckerd + libncore.so, x2 ABI). After it finishes: run"
-Write-Host "tools\update-peckerd.ps1 in pecker-agent to pull the artifacts."
+Write-Host "tools\update-peckerd.cmd in pecker-agent to pull the artifacts."
