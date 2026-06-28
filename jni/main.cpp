@@ -23,20 +23,24 @@
 #else
 #define PECKERD_RESULT_DIR "/data/local/tmp/pecker32"
 #endif
-// Two fixed result files — one per task type, matching ncore.cpp.
-#define PECKERD_RESULT_APK       PECKERD_RESULT_DIR "/peckerd_apk_result.json"
-#define PECKERD_RESULT_APPLET_WX PECKERD_RESULT_DIR "/peckerd_applet_wx_result.json"
-
-static const char* result_file_for_pkg(const char* pkg) {
-    if (pkg != nullptr && strncmp(pkg, "com.tencent.mm", 14) == 0) {
-        return PECKERD_RESULT_APPLET_WX;
-    }
-    return PECKERD_RESULT_APK;
+// Build result-file path into buf.  Mirrors ncore.cpp's result_file_for_pkg.
+// Path is /data/data/<pkg>/peckerd_result.json — the app process owns that
+// directory and can write it, while peckerd (root) can stat/read/unlink it.
+// Returns false on buffer overflow.
+static bool result_file_for_pkg(char* buf, size_t buf_size, const char* pkg) {
+    if (pkg == nullptr || pkg[0] == '\0') return false;
+    int n = snprintf(buf, buf_size, "/data/data/%s/peckerd_result.json", pkg);
+    return n > 0 && (size_t)n < buf_size;
 }
 
 static void wait_for_spawn_callback(std::promise<int>& promise_obj,
                                     const std::string& package_name) {
-    const char* result_path = result_file_for_pkg(package_name.c_str());
+    char result_path[256];
+    if (!result_file_for_pkg(result_path, sizeof(result_path), package_name.c_str())) {
+        LOGE("main: result_file_for_pkg overflow, pkg=%s", package_name.c_str());
+        promise_obj.set_value(-1);
+        return;
+    }
 
     // Remove any stale result from a previous run of this task type.
     // unlink (directory-permission based) works even when the file is owned

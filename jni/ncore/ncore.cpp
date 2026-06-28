@@ -70,17 +70,14 @@ static void* memfd_load(const char* path, int dlopen_flags) {
 #else
 #define PECKERD_RESULT_DIR "/data/local/tmp/pecker32"
 #endif
-// Two fixed result files — one per task type.  Named by task type rather than
-// package name so the device never accumulates per-package files.
-// Determined by target package prefix: com.tencent.mm → applet, else → APK.
-#define PECKERD_RESULT_APK       PECKERD_RESULT_DIR "/peckerd_apk_result.json"
-#define PECKERD_RESULT_APPLET_WX PECKERD_RESULT_DIR "/peckerd_applet_wx_result.json"
-
-static const char* result_file_for_pkg(const char* pkg) {
-    if (pkg != nullptr && strncmp(pkg, "com.tencent.mm", 14) == 0) {
-        return PECKERD_RESULT_APPLET_WX;
-    }
-    return PECKERD_RESULT_APK;
+// Build result-file path into buf.  Path is /data/data/<pkg>/peckerd_result.json
+// so the app process (which owns that directory) can write it without SELinux
+// restrictions, while peckerd (root) can stat/read/unlink it.
+// Returns false on buffer overflow.
+static bool result_file_for_pkg(char* buf, size_t buf_size, const char* pkg) {
+    if (pkg == nullptr || pkg[0] == '\0') return false;
+    int n = snprintf(buf, buf_size, "/data/data/%s/peckerd_result.json", pkg);
+    return n > 0 && (size_t)n < buf_size;
 }
 
 // v2 prefix removed: the detection device always runs the latest ncore build,
@@ -248,12 +245,16 @@ static void sync_target_from_file() {
 }
 
 static void send_status_to_injector(const char* package_name, const char* so_path) {
-    // Select result file by task type (not package name) so the device never
-    // accumulates per-package files.  Use g_target_package so that sub-processes
-    // like com.tencent.mm:appbrand0 still write to the applet file.
+    // Use g_target_package (set by ainject) so sub-processes like
+    // com.tencent.mm:appbrand0 write to the same result file as the main process.
     const char* target = (g_target_package != nullptr) ? g_target_package
                                                         : package_name;
-    const char* result_path = result_file_for_pkg(target);
+
+    char result_path[256];
+    if (!result_file_for_pkg(result_path, sizeof(result_path), target)) {
+        LOGE("ncore: result_file_for_pkg overflow, pkg=%s", target != nullptr ? target : "(null)");
+        return;
+    }
 
     char payload_buf[512] = {0};
     snprintf(payload_buf,
