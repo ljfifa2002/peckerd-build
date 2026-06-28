@@ -26,9 +26,13 @@
 #define NCORE_ACLEAR_ADDR_FILE "/data/local/tmp/pecker32/ncore_aclear_addr"
 #endif
 
-// Load a file into a local anonymous memfd and return the fd.
-// The caller should close the fd after the remote dlopen completes.
-// Returns -1 on failure.
+#if !defined(__aarch64__)
+// ARM32: load a file into a local anonymous memfd and return the fd.
+// The caller passes "/proc/<peckerd_pid>/fd/<n>" to the remote dlopen.
+// This cross-process fd trick works on standard Android 32-bit because
+// the SELinux policy allows zygote to read shell/magisk fd symlinks there.
+// On ARM64 / HarmonyOS 4.x the same access is denied, so ARM64 uses the
+// remote-memfd path below instead.
 static int local_memfd_from_file(const char* path) {
     int src = open(path, O_RDONLY);
     if (src < 0) { LOGE("local_memfd: open(%s) errno=%d", path, errno); return -1; }
@@ -48,6 +52,7 @@ static int local_memfd_from_file(const char* path) {
     munmap(mapped, size);
     return mfd;
 }
+#endif // !__aarch64__
 
 static void* remote_alloc_string(pid_t pid, const char* str) {
     if (pid <= 0 || str == nullptr || str[0] == '\0') {
@@ -77,97 +82,247 @@ static void* inject_so_handle_by_pid(pid_t pid, const char* so_path) {
         return nullptr;
     }
 
-    // Load the library into a local memfd so the remote dlopen sees
-    // "/proc/<our_pid>/fd/<n>" which the linker resolves to "memfd:lib (deleted)".
-    // This prevents the real file path from appearing in /proc/<remote>/maps.
-    int mfd = local_memfd_from_file(so_path);
-    char load_path[64];
-    const char* dlopen_path;
-    if (mfd >= 0) {
-        snprintf(load_path, sizeof(load_path), "/proc/%d/fd/%d", getpid(), mfd);
-        dlopen_path = load_path;
-    } else {
-        LOGE("inject_so_handle_by_pid: memfd failed, falling back to direct path");
-        dlopen_path = so_path;
-        mfd = -1;
+#if !defined(__aarch64__)
+    // ARM32: use the local-memfd + proc-fd path.  The ARM32 mmap calling convention
+    // (64-bit off_t alignment on stack) makes the remote-mmap approach fragile, and
+    // the SELinux cross-process fd restriction that requires remote-memfd on ARM64
+    // does not apply to the 32-bit devices this build targets.
+    {
+        int mfd = local_memfd_from_file(so_path);
+        char load_path[64];
+        const char* dlopen_path;
+        if (mfd >= 0) {
+            snprintf(load_path, sizeof(load_path), "/proc/%d/fd/%d", getpid(), mfd);
+            dlopen_path = load_path;
+        } else {
+            LOGE("inject_so_handle_by_pid: local memfd failed, falling back to direct path");
+            dlopen_path = so_path;
+            mfd = -1;
+        }
+
+        bool attached = false;
+        void* remote_path = nullptr;
+        void* handle = nullptr;
+
+        if (!attach_process(pid)) {
+            LOGE("inject_so_handle_by_pid: attach failed, pid=%d", pid);
+            if (mfd >= 0) close(mfd);
+            return nullptr;
+        }
+        attached = true;
+        LOGI("inject_so_handle_by_pid: attached to pid=%d", pid);
+
+        remote_path = remote_alloc_string(pid, dlopen_path);
+        if (remote_path == nullptr) {
+            LOGE("inject_so_handle_by_pid: remote_alloc_string failed");
+            if (mfd >= 0) close(mfd);
+            detach_process(pid);
+            return nullptr;
+        }
+
+        handle = call_remote_function<void*, const char*, int>(
+            pid,
+            reinterpret_cast<void*>(dlopen),
+            reinterpret_cast<const char*>(remote_path),
+            RTLD_NOW | RTLD_GLOBAL
+        );
+        if (handle == nullptr) {
+            LOGE("inject_so_handle_by_pid: remote dlopen failed");
+            char* remote_error = call_remote_function<char*>(
+                pid, reinterpret_cast<void*>(dlerror));
+            if (remote_error != nullptr) {
+                char error_buf[512] = {0};
+                ptrace_read(pid, reinterpret_cast<long>(remote_error),
+                            reinterpret_cast<uint8_t*>(error_buf), sizeof(error_buf) - 1);
+                LOGE("inject_so_handle_by_pid: dlerror=%s", error_buf);
+            }
+            call_remote_function<void, void*>(pid, reinterpret_cast<void*>(free), remote_path);
+            if (mfd >= 0) close(mfd);
+            detach_process(pid);
+            return nullptr;
+        }
+        LOGI("inject_so_handle_by_pid: remote dlopen success, handle=%p", handle);
+        call_remote_function<void, void*>(pid, reinterpret_cast<void*>(free), remote_path);
+        if (mfd >= 0) close(mfd);
+        if (!detach_process(pid)) {
+            LOGE("inject_so_handle_by_pid: detach failed after success");
+            return nullptr;
+        }
+        LOGI("inject_so_handle_by_pid: inject success");
+        return handle;
+    }
+#endif // !__aarch64__
+
+    // ARM64: remote-memfd path.
+    // Create the memfd inside zygote so dlopen uses "/proc/self/fd/N" — a
+    // self-reference that has no cross-domain SELinux restriction, unlike
+    // "/proc/<peckerd_pid>/fd/N" (denied on HarmonyOS 4.x where zygote cannot
+    // read magisk-context process fd symlinks).
+
+    // Read the SO file locally so we can push its content into the remote memfd.
+    int src_fd = open(so_path, O_RDONLY);
+    if (src_fd < 0) {
+        LOGE("inject_so_handle_by_pid: open(%s) errno=%d", so_path, errno);
+        return nullptr;
+    }
+    struct stat st;
+    if (fstat(src_fd, &st) < 0) {
+        LOGE("inject_so_handle_by_pid: fstat errno=%d", errno);
+        close(src_fd);
+        return nullptr;
+    }
+    size_t so_size = (size_t)st.st_size;
+    void* so_buf = mmap(nullptr, so_size, PROT_READ, MAP_PRIVATE, src_fd, 0);
+    close(src_fd);
+    if (so_buf == MAP_FAILED) {
+        LOGE("inject_so_handle_by_pid: local mmap errno=%d", errno);
+        return nullptr;
     }
 
+    // Remote-memfd approach: create the memfd inside zygote so dlopen uses
+    // "/proc/self/fd/N" — a self-reference that has no cross-domain SELinux
+    // restriction, unlike "/proc/<peckerd_pid>/fd/N" (denied on HarmonyOS 4.x
+    // where zygote cannot read magisk-context process fd symlinks).
     bool attached = false;
-    void* remote_path = nullptr;
-    void* handle = nullptr;
+    void* name_ptr   = nullptr;
+    int   remote_mfd = -1;
+    void* mapped_addr = reinterpret_cast<void*>(-1); // MAP_FAILED sentinel
+    void* path_ptr   = nullptr;
+    void* handle     = nullptr;
 
     if (!attach_process(pid)) {
         LOGE("inject_so_handle_by_pid: attach failed, pid=%d", pid);
-        if (mfd >= 0) close(mfd);
+        munmap(so_buf, so_size);
         return nullptr;
     }
     attached = true;
     LOGI("inject_so_handle_by_pid: attached to pid=%d", pid);
 
-    remote_path = remote_alloc_string(pid, dlopen_path);
-    if (remote_path == nullptr) {
-        LOGE("inject_so_handle_by_pid: remote_alloc_string failed");
+    // Step 1: allocate the memfd name string in zygote.
+    name_ptr = remote_alloc_string(pid, "lib");
+    if (name_ptr == nullptr) {
+        LOGE("inject_so_handle_by_pid: remote alloc name failed");
         goto fail;
+    }
+
+    // Step 2: remote memfd_create("lib", MFD_CLOEXEC) inside zygote.
+    {
+        void* r = call_remote_function<void*>(
+            pid,
+            reinterpret_cast<void*>(syscall),
+            (long)__NR_memfd_create,
+            (long)(uintptr_t)name_ptr,
+            (long)MFD_CLOEXEC
+        );
+        remote_mfd = (int)(long)(uintptr_t)r;
+    }
+    call_remote_function<void, void*>(pid, reinterpret_cast<void*>(free), name_ptr);
+    name_ptr = nullptr;
+
+    if (remote_mfd < 0) {
+        LOGE("inject_so_handle_by_pid: remote memfd_create failed ret=%d", remote_mfd);
+        goto fail;
+    }
+    LOGI("inject_so_handle_by_pid: remote memfd_create ok fd=%d", remote_mfd);
+
+    // Step 3: size the memfd.
+    call_remote_function<void*, int, off_t>(
+        pid,
+        reinterpret_cast<void*>(ftruncate),
+        remote_mfd,
+        (off_t)so_size
+    );
+
+    // Step 4: mmap the memfd in zygote (shared + writable so we can pwrite into it).
+    mapped_addr = call_remote_function<void*, void*, size_t, int, int, int, off_t>(
+        pid,
+        reinterpret_cast<void*>(mmap),
+        (void*)nullptr,
+        so_size,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        remote_mfd,
+        (off_t)0
+    );
+    if (mapped_addr == reinterpret_cast<void*>(-1) || mapped_addr == nullptr) {
+        LOGE("inject_so_handle_by_pid: remote mmap failed");
+        goto fail;
+    }
+    LOGI("inject_so_handle_by_pid: remote mmap at %p size=%zu", mapped_addr, so_size);
+
+    // Step 5: write SO content into the mapped region via /proc/<pid>/mem.
+    ptrace_write(pid, reinterpret_cast<long>(mapped_addr), so_buf, so_size);
+    munmap(so_buf, so_size);
+    so_buf = MAP_FAILED; // mark as consumed
+
+    // Step 6: unmap the temporary mapping in zygote (memfd content persists).
+    call_remote_function<void*, void*, size_t>(
+        pid,
+        reinterpret_cast<void*>(munmap),
+        mapped_addr,
+        so_size
+    );
+    mapped_addr = reinterpret_cast<void*>(-1);
+
+    // Step 7: dlopen("/proc/self/fd/<remote_mfd>") inside zygote.
+    {
+        char fd_path[64];
+        snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", remote_mfd);
+        path_ptr = remote_alloc_string(pid, fd_path);
+        if (path_ptr == nullptr) {
+            LOGE("inject_so_handle_by_pid: remote alloc fd_path failed");
+            goto fail;
+        }
     }
 
     handle = call_remote_function<void*, const char*, int>(
         pid,
         reinterpret_cast<void*>(dlopen),
-        reinterpret_cast<const char*>(remote_path),
+        reinterpret_cast<const char*>(path_ptr),
         RTLD_NOW | RTLD_GLOBAL
     );
     if (handle == nullptr) {
         LOGE("inject_so_handle_by_pid: remote dlopen failed");
-
         char* remote_error = call_remote_function<char*>(
-            pid,
-            reinterpret_cast<void*>(dlerror)
-        );
+            pid, reinterpret_cast<void*>(dlerror));
         if (remote_error != nullptr) {
             char error_buf[512] = {0};
-            ptrace_read(pid,
-                        reinterpret_cast<long>(remote_error),
-                        reinterpret_cast<uint8_t*>(error_buf),
-                        sizeof(error_buf) - 1);
+            ptrace_read(pid, reinterpret_cast<long>(remote_error),
+                        reinterpret_cast<uint8_t*>(error_buf), sizeof(error_buf) - 1);
             LOGE("inject_so_handle_by_pid: dlerror=%s", error_buf);
-        } else {
-            LOGE("inject_so_handle_by_pid: dlerror returned null");
         }
-
         goto fail;
     }
+    LOGI("inject_so_handle_by_pid: remote dlopen success handle=%p", handle);
 
-    LOGI("inject_so_handle_by_pid: remote dlopen success, handle=%p", handle);
+    call_remote_function<void, void*>(pid, reinterpret_cast<void*>(free), path_ptr);
+    path_ptr = nullptr;
 
-    call_remote_function<void, void*>(
-        pid,
-        reinterpret_cast<void*>(free),
-        remote_path
-    );
-    remote_path = nullptr;
-
-    if (mfd >= 0) { close(mfd); mfd = -1; }
+    // Close the remote fd; dlopen keeps the mapping alive via the handle.
+    call_remote_function<void*, int>(
+        pid, reinterpret_cast<void*>(close), remote_mfd);
+    remote_mfd = -1;
 
     if (!detach_process(pid)) {
         LOGE("inject_so_handle_by_pid: detach failed after success");
         return nullptr;
     }
-
     LOGI("inject_so_handle_by_pid: inject success");
     return handle;
 
 fail:
-    if (remote_path != nullptr) {
-        call_remote_function<void, void*>(
-            pid,
-            reinterpret_cast<void*>(free),
-            remote_path
-        );
+    if (so_buf != MAP_FAILED) munmap(so_buf, so_size);
+    if (mapped_addr != reinterpret_cast<void*>(-1) && mapped_addr != nullptr) {
+        call_remote_function<void*, void*, size_t>(
+            pid, reinterpret_cast<void*>(munmap), mapped_addr, so_size);
     }
-    if (mfd >= 0) close(mfd);
-    if (attached) {
-        detach_process(pid);
-    }
+    if (name_ptr != nullptr)
+        call_remote_function<void, void*>(pid, reinterpret_cast<void*>(free), name_ptr);
+    if (path_ptr != nullptr)
+        call_remote_function<void, void*>(pid, reinterpret_cast<void*>(free), path_ptr);
+    if (remote_mfd >= 0)
+        call_remote_function<void*, int>(pid, reinterpret_cast<void*>(close), remote_mfd);
+    if (attached) detach_process(pid);
     return nullptr;
 }
 
