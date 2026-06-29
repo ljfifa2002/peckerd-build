@@ -80,10 +80,6 @@ static bool result_file_for_pkg(char* buf, size_t buf_size, const char* pkg) {
     return n > 0 && (size_t)n < buf_size;
 }
 
-// v2 prefix removed: the detection device always runs the latest ncore build,
-// so version-based lock-file conflicts cannot occur in practice.
-// The plain prefix is kept consistent with historical lock files on device.
-#define PECKERD_LOCK_PREFIX "/data/local/tmp/ncore_injected_"
 // Per-zygote-PID file that marks fork/vfork hooks as installed.
 // Keyed by PID so a zygote restart (new PID) gets a clean slate.
 // Guards against double-hooking when multiple ncore SO instances are loaded
@@ -98,11 +94,18 @@ static bool result_file_for_pkg(char* buf, size_t buf_size, const char* pkg) {
 // does not expose memfd-loaded SO symbols.
 #define NCORE_ACLEAR_ADDR_FILE PECKERD_RESULT_DIR "/ncore_aclear_addr"
 
-// Build lock-file path for a package name.
-// Returns length written (not including null), or 0 on overflow.
-static size_t lock_path(char* buf, size_t buf_size, const char* pkg) {
-    size_t n = snprintf(buf, buf_size, "%s%s", PECKERD_LOCK_PREFIX, pkg);
-    return (n < buf_size) ? n : 0;
+// Build lock-file path for a package name into buf.
+// Path is /data/data/<pkg>/ncore_injected so the app process (which owns
+// that directory) can write it, and sibling sub-processes (same pkg, same
+// UID) can read it for cross-process injection deduplication.
+// pm clear (run before each task) wipes the whole data directory, so the
+// lock never leaks across tasks even when clear_injected() fails in
+// zygote context (which cannot write app_data_file on HarmonyOS 4.x).
+// Returns true on success, false on overflow.
+static bool lock_path(char* buf, size_t buf_size, const char* pkg) {
+    if (pkg == nullptr || pkg[0] == '\0') return false;
+    int n = snprintf(buf, buf_size, "/data/data/%s/ncore_injected", pkg);
+    return n > 0 && (size_t)n < buf_size;
 }
 
 // Returns true if this package has already been injected in another process.
