@@ -385,16 +385,6 @@ static bool load_payload_if_needed(const char* package_name) {
         return true;
     }
 
-    // Cross-process one-shot guard: if another forked process already loaded
-    // the payload for this package, skip injection in this process.
-    // This prevents an infinite fork loop when the app uses multi-process
-    // watchdog/guardian patterns (all children share the same package name).
-    if (is_already_injected(g_target_package)) {
-        LOGI("ncore: payload already injected in another process for %s, skipping",
-             package_name);
-        return true;
-    }
-
     LOGI("ncore: target matched, loading payload package=%s so=%s",
          package_name != nullptr ? package_name : "(null)",
          g_target_so != nullptr ? g_target_so : "(null)");
@@ -478,26 +468,12 @@ DECLARE_HOOK(fork, pid_t, void) {
             // Parent confirmed target already injected; skip hooks in this child.
             LOGI("ncore: child forked pid=%d, injection already done, skipping hooks",
                  getpid());
-        } else if (g_target_package != nullptr && is_already_injected(g_target_package)) {
-            // Lock file exists: target loaded payload in a concurrent sibling.
-            // Skip hook installation to avoid redundant work.
-            LOGI("ncore: child forked pid=%d, target already injected via lock, skipping hooks",
-                 getpid());
         } else {
             LOGI("ncore: child forked pid=%d", getpid());
             install_child_hooks();
         }
     } else if (pid > 0) {
         LOGD("ncore: parent observed fork child=%d", pid);
-        // Only mark injection done once the target package has confirmed it loaded
-        // payload (lock file created by mark_injected in the child). This prevents
-        // pre-marking done when an unrelated process (e.g. a content provider) is
-        // forked before the actual target app, which would cause the target fork to
-        // inherit already_done=true and skip hook installation entirely.
-        if (!already_done && g_target_package != nullptr && is_already_injected(g_target_package)) {
-            g_injection_done = true;
-            LOGI("ncore: marked injection done, target confirmed: %s", g_target_package);
-        }
     }
     return pid;
 }
